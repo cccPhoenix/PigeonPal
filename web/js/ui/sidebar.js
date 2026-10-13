@@ -34,7 +34,7 @@ export function createSidebar({ root, store, onSelect, onMe, onAddSource, onSear
     const nick = (p.nickname || '我').slice(0, 1)
     root.innerHTML = `
 <div class="side-top">
-  <div class="brand">${markHTML({ ...look(), size: 22 })}<span>PigeonPal</span></div>
+  <div class="brand"><img class="brand-icon" src="./assets/icon.png" width="32" height="32" alt="" draggable="false"><span>PigeonPal</span></div>
   <button class="icon-btn" data-side="search" aria-label="搜索消息">${icon('search')}</button>
 </div>
 <button class="bot-card" data-ch="bot" aria-current="${active === 'bot'}" aria-label="和${escapeHtml(p.botName)}聊天">
