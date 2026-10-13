@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>形象实验室 · PigeonPal</title>
+    <link rel="stylesheet" href="./css/tokens.css">
+    <link rel="stylesheet" href="./css/mark.css">
+    <link rel="stylesheet" href="./css/app.css">
+    <style>
+      body { overflow: auto; }
+      .lab { max-width: 1080px; margin: 0 auto; padding: 40px 28px 80px; }
+      .lab h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -.01em; }
+      .lab > p { color: var(--ink-2); margin: 0 0 28px; max-width: 640px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+      .tile { background: var(--card); border-radius: 24px; box-shadow: inset 0 0 0 .5px var(--line-2), var(--shadow-1); padding: 28px 22px 20px; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+      .tile h2 { margin: 0; font-size: 17px; }
+      .tile p { margin: -8px 0 0; font-size: 13px; color: var(--ink-2); text-align: center; }
+      .sizes { display: flex; align-items: flex-end; gap: 18px; padding: 14px 18px; border-radius: 16px; background: var(--sidebar); }
+      .states { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+      .states .pill[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+      .spec { margin-top: 36px; font-size: 14px; line-height: 1.8; color: var(--ink-2); background: var(--sidebar); border-radius: 18px; padding: 20px 24px; }
+      .spec code { font-size: 13px; background: var(--hover); padding: 1px 6px; border-radius: 6px; color: var(--ink); }
+      .spec h3 { margin: 0 0 8px; color: var(--ink); font-size: 15px; }
+      .demo-chat { width: 100%; padding: 12px 4px 0; border-top: .5px solid var(--line); }
+      .demo-chat .row { margin-top: 4px; }
+      .demo-chat .row.first { margin-top: 0; }
+    </style>
+  </head>
+  <body>
+    <div class="lab">
+      <h1>形象实验室</h1>
+      <p>正式形象还在设计中，「占位」就是留空的那一格。两只鸽子是我的草图，只用来看方向和动效。把鼠标移到大图上它会看着你，悬停会被摸摸，点一下会转圈。</p>
+      <div class="grid" id="grid"></div>
+      <div class="spec">
+        <h3>接入你自己的形象</h3>
+        方式一：设置 → 形象与称呼 → 上传图片（PNG / SVG / GIF）。图片只会做整体的浮动和跳动。<br>
+        方式二：做成分层 SVG，在 <code>web/js/mark/looks.js</code> 里注册，就能拥有全部动作。约定的图层是：
+        <code>.mk-body</code> 整体、<code>.mk-eyes</code> 眼睛组（会跟随鼠标）、<code>.mk-eye</code> 每只睁开的眼睛（眨眼）、<code>.mk-happy</code> 开心闭眼、可选 <code>.mk-wing-l / .mk-wing-r</code> 翅膀、<code>.mk-shadow</code> 地面阴影。画布 100×100。详见 <code>docs/avatar.md</code>。
+      </div>
+    </div>
+    <script type="module">
+      import { LOOKS, LOOK_IDS } from './js/mark/looks.js'
+      import { markHTML, setMarkState, startGaze } from './js/mark/index.js'
+      const STATES = [['idle', '待机'], ['thinking', '思考'], ['alert', '来消息'], ['happy', '开心']]
+      document.getElementById('grid').innerHTML = LOOK_IDS.map(id => `
+        <div class="tile" data-look="${id}">
+          ${markHTML({ look: id, size: 160, live: true, gaze: true, poke: true })}
+          <h2>${LOOKS[id].label}</h2><p>${LOOKS[id].note}</p>
+          <div class="states">${STATES.map(([s, l]) => `<button class="pill" data-state="${s}" aria-pressed="${s === 'idle'}">${l}</button>`).join('')}</div>
+          <div class="sizes">${[68, 36, 30, 22].map(size => markHTML({ look: id, size, live: true })).join('')}</div>
+          <div class="demo-chat">
+            <div class="row bot first"><div class="gutter">${markHTML({ look: id, size: 36, live: true })}</div><div class="stack"><div class="line"><div class="bubble">🎤 今晚 19:00 有一场报告会！</div></div></div></div>
+            <div class="row bot"><div class="gutter"></div><div class="stack"><div class="line"><div class="bubble">同学，在图书馆报告厅，感兴趣可以去听听～</div></div></div></div>
+          </div>
+        </div>`).join('')
+      document.getElementById('grid').addEventListener('click', e => {
+        const b = e.target.closest('[data-state]')
+        if (!b) return
+        const tile = b.closest('.tile')
+        for (const x of tile.querySelectorAll('[data-state]')) x.setAttribute('aria-pressed', String(x === b))
+        for (const m of tile.querySelectorAll('.mk')) {
+          setMarkState(m, b.dataset.state)
+          if (b.dataset.state === 'alert') setTimeout(() => { for (const x of tile.querySelectorAll('[data-state]')) x.setAttribute('aria-pressed', String(x.dataset.state === 'idle')) }, 1300)
+        }
+      })
+      startGaze(document)
+    </script>
+  </body>
+</html>

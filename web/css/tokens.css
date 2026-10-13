@@ -1,0 +1,84 @@
+/* Design tokens. Every color in the app comes from here, so a theme is one block. */
+:root {
+  --bg: #fcfcfc;
+  --sidebar: #f6f6f7;
+  --bubble: #efeff1;
+  --card: #ffffff;
+  --ink: #141416;
+  --ink-2: rgba(20, 20, 22, .6);
+  --ink-3: rgba(20, 20, 22, .38);
+  --line: rgba(20, 20, 22, .08);
+  --line-2: rgba(20, 20, 22, .14);
+  --hover: rgba(120, 120, 128, .09);
+  --active: rgba(120, 120, 128, .15);
+  --user: #0e0e10;
+  --user-ink: #fafafa;
+  --accent: #4f63f6;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(79, 99, 246, .1);
+  --danger: #e5484d;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .04), 0 2px 8px rgba(0, 0, 0, .04);
+  --shadow-2: 0 8px 32px rgba(0, 0, 0, .1), 0 1px 3px rgba(0, 0, 0, .06);
+  --scrim: rgba(10, 10, 12, .28);
+
+  /* Mark (avatar) paints */
+  --mk-ink: #17171a;
+  --mk-placeholder: #d7dae1;
+  --mk-cheek: #ff8fa6;
+
+  --radius-bubble: 18px;
+  --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif;
+  --spring: cubic-bezier(.32, .72, 0, 1);
+  --ease-out: cubic-bezier(.22, 1, .36, 1);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141416;
+    --sidebar: #1a1a1d;
+    --bubble: #252528;
+    --card: #1e1e21;
+    --ink: #f2f2f3;
+    --ink-2: rgba(242, 242, 243, .62);
+    --ink-3: rgba(242, 242, 243, .38);
+    --line: rgba(242, 242, 243, .08);
+    --line-2: rgba(242, 242, 243, .15);
+    --hover: rgba(160, 160, 168, .12);
+    --active: rgba(160, 160, 168, .2);
+    --user: #f2f2f3;
+    --user-ink: #141416;
+    --accent: #6b7cff;
+    --accent-soft: rgba(107, 124, 255, .16);
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, .3);
+    --shadow-2: 0 12px 40px rgba(0, 0, 0, .5), 0 0 0 1px rgba(255, 255, 255, .06);
+    --scrim: rgba(0, 0, 0, .5);
+    --mk-ink: #141416;
+    --mk-placeholder: #5d606a;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #141416;
+  --sidebar: #1a1a1d;
+  --bubble: #252528;
+  --card: #1e1e21;
+  --ink: #f2f2f3;
+  --ink-2: rgba(242, 242, 243, .62);
+  --ink-3: rgba(242, 242, 243, .38);
+  --line: rgba(242, 242, 243, .08);
+  --line-2: rgba(242, 242, 243, .15);
+  --hover: rgba(160, 160, 168, .12);
+  --active: rgba(160, 160, 168, .2);
+  --user: #f2f2f3;
+  --user-ink: #141416;
+  --accent: #6b7cff;
+  --accent-soft: rgba(107, 124, 255, .16);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .3);
+  --shadow-2: 0 12px 40px rgba(0, 0, 0, .5), 0 0 0 1px rgba(255, 255, 255, .06);
+  --scrim: rgba(0, 0, 0, .5);
+  --mk-ink: #141416;
+  --mk-placeholder: #5d606a;
+  color-scheme: dark;
+}

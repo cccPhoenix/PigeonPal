@@ -1,0 +1,76 @@
+/* The mark (bot face). Parts follow docs/avatar.md. Motion only on [data-live]. */
+.mk {
+  --gx: 0; --gy: 0;
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  width: var(--mk-size, 36px);
+  height: var(--mk-size, 36px);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.mk-svg { width: 100%; height: 100%; overflow: visible; }
+.mk-img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+.mk-shadow { fill: var(--ink); opacity: .07; transform-box: fill-box; transform-origin: center; }
+.mk-body { transform-box: view-box; transform-origin: 50% 90%; }
+.mk-eye { fill: var(--mk-ink); transform-box: fill-box; transform-origin: center; }
+.mk-happy { fill: none; stroke: var(--mk-ink); stroke-width: 3.2; stroke-linecap: round; opacity: 0; }
+.mk-wing-l { transform-box: fill-box; transform-origin: 100% 0; }
+.mk-wing-r { transform-box: fill-box; transform-origin: 0 0; }
+.mk-eyes { transition: transform .22s var(--ease-out); }
+.mk[data-poke] { cursor: pointer; }
+
+/* Gaze: the eyes slide toward the pointer, the body leans a hair. */
+.mk[data-gaze] .mk-eyes { transform: translate(calc(var(--gx) * 4.5px), calc(var(--gy) * 3.5px)); }
+
+/* idle */
+.mk[data-live][data-state="idle"] .mk-body { animation: mk-breathe 4.2s ease-in-out infinite; }
+.mk[data-live][data-state="idle"] .mk-eye { animation: mk-blink 5.2s var(--mk-blink-delay, 0s) infinite; }
+
+/* thinking */
+.mk[data-live][data-state="thinking"] .mk-body { animation: mk-ponder 1.8s ease-in-out infinite; }
+.mk[data-live][data-state="thinking"] .mk-eyes { transform: translate(3px, -3.5px); }
+.mk[data-live][data-state="thinking"] .mk-eye { animation: mk-blink 3.4s .4s infinite; }
+
+/* alert (one shot) */
+.mk[data-live][data-state="alert"] .mk-body { animation: mk-hop .62s var(--spring) 2; }
+.mk[data-live][data-state="alert"] .mk-shadow { animation: mk-shadow .62s var(--spring) 2; }
+.mk[data-live][data-state="alert"] .mk-wing-l { animation: mk-flap-l .2s ease-in-out 6; }
+.mk[data-live][data-state="alert"] .mk-wing-r { animation: mk-flap-r .2s ease-in-out 6; }
+
+/* happy (petting) */
+.mk[data-state="happy"] .mk-body { animation: mk-nuzzle 1.1s ease-in-out infinite; }
+.mk[data-state="happy"] .mk-eye { opacity: 0; }
+.mk[data-state="happy"] .mk-happy { opacity: 1; }
+
+/* poke: a little spin hop */
+.mk.mk-poke .mk-body { animation: mk-poke .8s var(--spring) 1 !important; }
+
+/* uploaded images only bob */
+.mk[data-image][data-live][data-state="idle"] .mk-img { animation: mk-bob 4s ease-in-out infinite; }
+.mk[data-image][data-live][data-state="thinking"] .mk-img { animation: mk-bob 1.4s ease-in-out infinite; }
+.mk[data-image][data-live][data-state="alert"] .mk-img { animation: mk-hop .62s var(--spring) 2; }
+
+/* A mark arriving with a new message pops in. */
+.mk-enter { animation: mk-enter .5s var(--spring) both; }
+
+@keyframes mk-breathe { 0%, 100% { transform: none; } 50% { transform: translateY(-1.2%) scale(.992, 1.016); } }
+@keyframes mk-blink { 0%, 44%, 50%, 100% { transform: scaleY(1); } 47% { transform: scaleY(.08); } 48.6% { transform: scaleY(1.05); } }
+@keyframes mk-ponder { 0%, 100% { transform: rotate(4deg); } 50% { transform: translateY(-2.5%) rotate(8deg); } }
+@keyframes mk-hop { 0%, 100% { transform: none; } 30% { transform: translateY(-13%) scale(.95, 1.06); } 62% { transform: scale(1.07, .93); } 82% { transform: scale(.98, 1.02); } }
+@keyframes mk-shadow { 0%, 100% { transform: none; } 30% { transform: scale(.7); opacity: .04; } }
+@keyframes mk-flap-l { 50% { transform: rotate(-26deg); } }
+@keyframes mk-flap-r { 50% { transform: rotate(26deg); } }
+@keyframes mk-nuzzle { 0%, 100% { transform: rotate(-3deg); } 50% { transform: rotate(7deg) translateX(2%) scale(1.02, .98); } }
+@keyframes mk-poke { 0% { transform: none; } 50% { transform: translateY(-16%) rotate(360deg); } 75% { transform: scale(1.08, .92) rotate(360deg); } 100% { transform: rotate(360deg); } }
+@keyframes mk-bob { 0%, 100% { transform: none; } 50% { transform: translateY(-4%) rotate(-3deg); } }
+@keyframes mk-enter { from { transform: scale(.4) translateY(30%); opacity: 0; } }
+
+/* Motion preference: calm keeps blinking only, off stops everything. */
+:root[data-motion="calm"] .mk .mk-body,
+:root[data-motion="calm"] .mk .mk-img { animation: none !important; }
+:root[data-motion="calm"] .mk[data-gaze] .mk-eyes { transform: none; }
+:root[data-motion="off"] .mk *, :root[data-motion="off"] .mk-enter { animation: none !important; transition: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .mk *, .mk-enter { animation: none !important; transition: none !important; }
+}

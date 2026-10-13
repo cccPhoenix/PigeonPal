@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN" data-motion="soft">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="#fafafa">
+    <meta name="description" content="PigeonPal，你的校园伙伴。聊天、写作、收藏与提醒的独立本地 UI 原型。">
+    <title>PigeonPal · 校园伙伴</title>
+    <link rel="icon" href="./assets/pigeon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="./styles.css">
+    <script type="module" src="./app.mjs"></script>
+  </head>
+  <body>
+    <div id="app" class="app-shell">
+      <aside id="sidebar" class="sidebar" aria-label="主导航"></aside>
+      <button id="sidebar-scrim" class="sidebar-scrim" aria-label="关闭侧栏" hidden></button>
+      <main class="workspace">
+        <header id="header" class="workspace-header"></header>
+        <div id="viewport" class="viewport" tabindex="-1"></div>
+        <div id="composer-zone" class="composer-zone"></div>
+      </main>
+    </div>
+    <dialog id="dialog" aria-labelledby="dialog-title"></dialog>
+    <div id="message-menu" class="message-menu" role="menu" hidden></div>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <script nomodule>document.body.textContent='请使用支持现代 JavaScript 的浏览器打开 PigeonPal。';</script>
+  </body>
+</html>
