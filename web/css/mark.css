@@ -17,11 +17,11 @@
 .mk-happy { fill: none; stroke: var(--mk-ink); stroke-width: 3.2; stroke-linecap: round; opacity: 0; }
 .mk-wing-l { transform-box: fill-box; transform-origin: 100% 0; }
 .mk-wing-r { transform-box: fill-box; transform-origin: 0 0; }
-.mk-eyes { transition: transform .22s var(--ease-out); }
+.mk-pupils { transition: transform .22s var(--ease-out); }
 .mk[data-poke] { cursor: pointer; }
 
-/* Gaze: the eyes slide toward the pointer, the body leans a hair. */
-.mk[data-gaze] .mk-eyes { transform: translate(calc(var(--gx) * 4.5px), calc(var(--gy) * 3.5px)); }
+/* Gaze moves pupils only. Eye whites, glasses and closed eyes stay anchored. */
+.mk[data-gaze] .mk-pupils { transform: translate(calc(var(--gx) * var(--mk-gaze-x, 2px)), calc(var(--gy) * var(--mk-gaze-y, 1.8px))); }
 
 /* idle */
 .mk[data-live][data-state="idle"] .mk-body { animation: mk-breathe 4.2s ease-in-out infinite; }
@@ -29,7 +29,7 @@
 
 /* thinking */
 .mk[data-live][data-state="thinking"] .mk-body { animation: mk-ponder 1.8s ease-in-out infinite; }
-.mk[data-live][data-state="thinking"] .mk-eyes { transform: translate(3px, -3.5px); }
+.mk[data-live][data-state="thinking"] .mk-pupils { transform: translate(var(--mk-gaze-x, 2px), calc(var(--mk-gaze-y, 1.8px) * -1)); }
 .mk[data-live][data-state="thinking"] .mk-eye { animation: mk-blink 3.4s .4s infinite; }
 
 /* alert (one shot) */
@@ -68,9 +68,19 @@
 
 /* Motion preference: calm keeps blinking only, off stops everything. */
 :root[data-motion="calm"] .mk .mk-body,
-:root[data-motion="calm"] .mk .mk-img { animation: none !important; }
-:root[data-motion="calm"] .mk[data-gaze] .mk-eyes { transform: none; }
+:root[data-motion="calm"] .mk .mk-img,
+:root[data-motion="calm"] .mk .mk-shadow,
+:root[data-motion="calm"] .mk .mk-wing-l,
+:root[data-motion="calm"] .mk .mk-wing-r,
+:root[data-motion="calm"] .mk-enter { animation: none !important; }
+:root[data-motion="calm"] .mk .mk-pupils { transform: none !important; }
 :root[data-motion="off"] .mk *, :root[data-motion="off"] .mk-enter { animation: none !important; transition: none !important; }
+:root[data-motion="off"] .mk .mk-pupils { transform: none !important; }
+:root[data-motion="off"] .mk .mk-eye { opacity: 1; }
+:root[data-motion="off"] .mk .mk-happy { opacity: 0; }
 @media (prefers-reduced-motion: reduce) {
   .mk *, .mk-enter { animation: none !important; transition: none !important; }
+  .mk .mk-pupils { transform: none !important; }
+  .mk .mk-eye { opacity: 1; }
+  .mk .mk-happy { opacity: 0; }
 }

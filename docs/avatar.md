@@ -4,6 +4,25 @@
 
 ## 两种接入方式
 
+### 已内置的参考角色
+
+`images/character0.png` 至 `character9.png` 已在 `web/js/mark/reference-looks.js` 中适配为分层 SVG，通过 `looks.js` 注册。按原图的轮廓、配色和服饰简化绘制，不依赖位图裁切；原图保留作为设计参考。
+
+| 原图 | 选择器名称 |
+|---|---|
+| character0 | 红心鸽 |
+| character1 | 派对鸽 |
+| character2 | 侦探鸽 |
+| character3 | 礼帽鸽 |
+| character4 | 法棍鸽 |
+| character5 | 围巾鸽 |
+| character6 | 冰蓝绅士 |
+| character7 | 森系旅人 |
+| character8 | 摇滚鸽 |
+| character9 | 邮差鸽 |
+
+在「设置 → 形象与称呼」中选择后自动保存，侧栏、顶部胶囊和消息头像同步更新。`lab.html` 中可检查每款角色的不同尺寸和状态。
+
 ### 1. 图片（最快）
 
 在「设置 → 形象与称呼 → 上传图片」上传 PNG、SVG、GIF 或 WebP 文件，大小不超过 1.5MB。图片按圆形裁切，动作只有整体的浮动、跳动和弹出。
@@ -26,7 +45,8 @@ registerLook('mine', {
 |---|---|---|
 | `.mk-shadow` | 否 | 地面阴影，放在 `.mk-body` 外面。跳起时会缩小 |
 | `.mk-body` | 是 | 整体，负责呼吸、歪头、跳、蹭、转圈 |
-| `.mk-eyes` | 是 | 眼睛组，会跟随鼠标，思考时向上看 |
+| `.mk-eyes` | 是 | 固定的眼睛组，眼白、眼眶和眼镜保持原位 |
+| `.mk-pupils` | 是 | 只包住眼珠，跟随鼠标，思考时向上看；按眼睛大小限制位移 |
 | `.mk-eye` | 是 | 每只睁开的眼睛（填充色用 `--mk-ink`），负责眨眼 |
 | `.mk-happy` | 否 | 开心闭眼（描边路径），被摸时代替 `.mk-eye` 显示 |
 | `.mk-wing-l` / `.mk-wing-r` | 否 | 翅膀，来消息时扑动 |

@@ -30,13 +30,13 @@
   <body>
     <div class="lab">
       <h1>形象实验室</h1>
-      <p>正式形象还在设计中，「占位」就是留空的那一格。两只鸽子是我的草图，只用来看方向和动效。把鼠标移到大图上它会看着你，悬停会被摸摸，点一下会转圈。</p>
+      <p>10 款参考角色和原有的鸽子草图都在这里。把鼠标移到大图上它会看着你，悬停会被摸摸，点一下会转圈。选好后，在聊天页「我的设置 → 形象与称呼」中切换。</p>
       <div class="grid" id="grid"></div>
       <div class="spec">
         <h3>接入你自己的形象</h3>
         方式一：设置 → 形象与称呼 → 上传图片（PNG / SVG / GIF）。图片只会做整体的浮动和跳动。<br>
         方式二：做成分层 SVG，在 <code>web/js/mark/looks.js</code> 里注册，就能拥有全部动作。约定的图层是：
-        <code>.mk-body</code> 整体、<code>.mk-eyes</code> 眼睛组（会跟随鼠标）、<code>.mk-eye</code> 每只睁开的眼睛（眨眼）、<code>.mk-happy</code> 开心闭眼、可选 <code>.mk-wing-l / .mk-wing-r</code> 翅膀、<code>.mk-shadow</code> 地面阴影。画布 100×100。详见 <code>docs/avatar.md</code>。
+        <code>.mk-body</code> 整体、<code>.mk-eyes</code> 固定眼睛组、<code>.mk-pupils</code> 眼珠（跟随鼠标）、<code>.mk-eye</code> 每只睁开的眼睛（眨眼）、<code>.mk-happy</code> 开心闭眼、可选 <code>.mk-wing-l / .mk-wing-r</code> 翅膀、<code>.mk-shadow</code> 地面阴影。画布 100×100。详见 <code>docs/avatar.md</code>。
       </div>
     </div>
     <script type="module">

@@ -3,10 +3,13 @@
 //   .mk-shadow  ground shadow (outside the body, shrinks on hops)
 //   .mk-body    everything that moves together
 //   .mk-wing-l / .mk-wing-r   optional, flap on alerts
-//   .mk-eyes    group that follows the pointer
+//   .mk-eyes    stationary eye group
+//   .mk-pupils  pupils only, follows the pointer
 //   .mk-eye     each open eye (blinks)
 //   .mk-happy   closed happy eyes, shown while petted
 // A look can also be a plain image (see `image` in mark/index.js), which only bobs.
+
+import { REFERENCE_LOOKS } from './reference-looks.js'
 
 const shadow = '<ellipse class="mk-shadow" cx="50" cy="94" rx="22" ry="3.2"/>'
 
@@ -19,8 +22,10 @@ export const LOOKS = {
 <g class="mk-body">
   <path d="M50 14c21 0 36 15 36 37 0 23-15 38-36 38S14 74 14 51c0-22 15-37 36-37Z" fill="var(--mk-placeholder)"/>
   <g class="mk-eyes">
+    <g class="mk-pupils">
     <ellipse class="mk-eye" cx="40" cy="48" rx="4.4" ry="7"/>
     <ellipse class="mk-eye" cx="60" cy="48" rx="4.4" ry="7"/>
+    </g>
     <path class="mk-happy" d="M35 50q5-6 10 0M55 50q5-6 10 0"/>
   </g>
 </g>`,
@@ -37,8 +42,10 @@ export const LOOKS = {
   <path d="M51 14c-2-6 2-10 8-8-3 2-3 5-2 9Z" fill="#6476ff"/>
   <path d="M50 13c20 0 33 17 33 40 0 22-14 36-33 36S17 75 17 53c0-23 13-40 33-40Z" fill="#6476ff"/>
   <g class="mk-eyes">
+    <g class="mk-pupils">
     <ellipse class="mk-eye" cx="39.5" cy="44" rx="4.2" ry="6.6"/>
     <ellipse class="mk-eye" cx="60.5" cy="44" rx="4.2" ry="6.6"/>
+    </g>
     <path class="mk-happy" d="M35 46q4.5-5.5 9 0M56 46q4.5-5.5 9 0"/>
   </g>
   <ellipse cx="30.5" cy="54" rx="5" ry="3" fill="var(--mk-cheek)" fill-opacity=".5"/>
@@ -61,12 +68,16 @@ export const LOOKS = {
   <path d="m78 30 9 3.2c1 .4 1 1.6 0 2L78 38Z" fill="#ffb53d"/>
   <ellipse cx="72" cy="41" rx="4" ry="2.4" fill="var(--mk-cheek)" fill-opacity=".55"/>
   <g class="mk-eyes">
+    <g class="mk-pupils">
     <ellipse class="mk-eye" cx="68" cy="29.5" rx="3.6" ry="5.6"/>
+    </g>
     <path class="mk-happy" d="M64 31q4-5 8 0"/>
   </g>
 </g>`,
   },
 }
+
+Object.assign(LOOKS, REFERENCE_LOOKS)
 
 export const LOOK_IDS = Object.keys(LOOKS)
 export const hasLook = id => typeof id === 'string' && Object.hasOwn(LOOKS, id)

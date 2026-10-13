@@ -30,7 +30,7 @@ export function setMarkState(node, state) {
   if (ONE_SHOT[state]) node._mkTimer = setTimeout(() => { node.dataset.state = 'idle' }, ONE_SHOT[state])
 }
 
-// Eyes follow the pointer on marks that opt in with data-gaze (the large ones).
+// Pupils follow the pointer on marks that opt in with data-gaze (the large ones).
 let gazeStarted = false
 export function startGaze(root = document) {
   if (gazeStarted) return
