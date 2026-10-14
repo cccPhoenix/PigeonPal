@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "python3 scripts/serve.py",
-    "test": "node --test tests/*.test.mjs"
+    "dev": "python scripts/serve.py",
+    "test": "node --test tests/*.test.mjs",
+    "crawler": "python scripts/pigeonpal_crawler.py run",
+    "crawler:once": "python scripts/pigeonpal_crawler.py run --once",
+    "crawler:status": "python scripts/pigeonpal_crawler.py status"
   }
 }

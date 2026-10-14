@@ -9,12 +9,14 @@ const PAGES = [
   ['bot', '形象与称呼', 'sparkle'],
   ['reminders', '提醒', 'bell'],
   ['notify', '主动消息', 'rss'],
+  ['auth', '身份认证', 'key'],
   ['look', '外观', 'image'],
   ['about', '关于', 'settings'],
 ]
 
 // Settings sheet. `api` is what it may change: { store, reminder(id, patch), demoReminder(), reset() }
 export function openSettings(api, { page = 'bot', opener } = {}) {
+  if (page === 'auth') return api.openIdentityAuth?.(opener)
   const { store } = api
   const box = sheet(`<nav class="sheet-nav"><h2>设置</h2>${PAGES.map(([id, label, ic]) => `<button class="nav-item" data-page="${id}">${icon(ic, 16)}${label}</button>`).join('')}</nav>
 <div class="sheet-body"></div>
@@ -62,11 +64,12 @@ ${store.state.channels.filter(c => c.kind === 'source').map(c => `<div class="to
 <div class="field"><span class="label">动效</span>${seg('motion', [['lively', '灵动'], ['calm', '克制'], ['off', '关闭']])}<span class="help">克制：只保留眨眼；关闭：完全静止。系统开启「减少动态效果」时也会静止。</span></div>`,
 
     about: () => `<h3>关于</h3>
-<p class="note">PigeonPal 第一版 UI 原型。聊天回复、频道通知都是演示数据；模型、网站抓取、后台提醒都已留好接口，见 docs/interfaces.md。</p>
+<p class="note">PigeonPal 校园伙伴。云峰与 ITC 来源由本机爬虫采集；聊天回复和示例频道仍为演示数据。校园账号可在「身份认证」中绑定。</p>
 <div class="btns"><a class="btn" href="./lab.html" target="_blank" style="display:inline-grid;place-items:center;text-decoration:none">打开形象实验室</a><button class="btn danger" data-set="reset">清空本地数据，重新开始</button></div>`,
   }
 
   function show(id) {
+    if (id === 'auth') return api.openIdentityAuth?.(opener)
     currentPage = id
     for (const n of box.querySelectorAll('[data-page]')) n.setAttribute('aria-current', String(n.dataset.page === id))
     body.innerHTML = `<section>${pages[id]()}</section>`

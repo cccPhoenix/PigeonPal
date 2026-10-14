@@ -9,6 +9,8 @@ import { createHeader } from './ui/header.js'
 import { createTranscript } from './ui/transcript.js'
 import { createComposer } from './ui/composer.js'
 import { openSettings } from './ui/settings.js'
+import { createAuthClient } from './services/auth.js'
+import { openIdentityAuth as showIdentityAuth } from './ui/auth.js'
 import { popover, dialog, closeOverlay, overlayFor, toast } from './ui/overlays.js'
 import { icon } from './ui/icons.js'
 import { escapeHtml, plain, whenLabel, clock, personalize } from './ui/format.js'
@@ -24,6 +26,30 @@ const services = {
 const store = createStore()
 const $ = id => document.getElementById(id)
 const app = $('app')
+const identityClient = createAuthClient()
+const sourceStates = new Map()
+let sourceStatusError = false
+let sourceRefresh = null
+
+async function refreshSourceStates() {
+  if (sourceRefresh) return sourceRefresh
+  sourceRefresh = identityClient.sources().then(sources => {
+    sourceStatusError = false
+    for (const source of sources) if (source && ['yunfeng', 'itc'].includes(source.id)) sourceStates.set(source.id, source)
+  }).catch(() => { sourceStatusError = true }).finally(() => { sourceRefresh = null })
+  return sourceRefresh
+}
+
+function openIdentityAuth(opener) {
+  showIdentityAuth({ client: identityClient, opener, onChange: refreshSourceStates })
+}
+
+function sourceStateLabel(sourceId) {
+  if (sourceStatusError) return '本机服务暂时不可用'
+  const state = sourceStates.get(sourceId)?.state
+  return ({ idle: '等待下次检查', ready: '正常采集', ok: '正常采集', success: '正常采集', active: '正常采集', running: '正在采集', crawling: '正在采集', partial: '部分正文待补齐', interrupted: '上次采集中断', auth_required: '待认证', auth_expired: '认证已失效', authenticating: '正在认证', error: '采集暂时异常', backoff: '稍后重试', paused: '已暂停', network_error: '网络暂时不可用' })[state] || (state ? '等待检查' : '正在读取状态…')
+}
+
 let active = sessionStorage.getItem('pp.active') || 'bot'
 if (!store.channel(active)) active = 'bot'
 
@@ -232,13 +258,34 @@ ${markHTML({ look: p.look, image: p.look === 'image' ? p.image : null, size: 88,
 </div>`, { className: 'profile-pop' })
     pop.addEventListener('click', e => { const b = e.target.closest('[data-go]'); if (b) openSettings(settingsApi, { page: b.dataset.go }) })
   } else {
+    let stopped = false
+    let timer = null
     const pop = popover(anchor, `<div class="profile">
 <div class="ch-icon" style="--tint:${escapeHtml(c.tint)};width:64px;height:64px;border-radius:20px;font-size:32px;margin:4px auto 10px">${escapeHtml(c.emoji)}</div>
 <h3>${escapeHtml(c.title)}</h3><p>${escapeHtml(p.botName)}帮你盯着这个来源</p>
 <dl class="kv"><dt>来源</dt><dd>${escapeHtml(c.site || '—')}</dd><dt>检查</dt><dd>${escapeHtml(c.every)}</dd><dt>通知</dt><dd>${c.notify === 'mute' ? '静音' : '有新消息就叫我'}</dd></dl>
-<div class="pills"><button class="pill" data-mute>${icon('bell', 15)}${c.notify === 'mute' ? '取消静音' : '静音'}</button></div>
-</div>`)
+${c.sourceId ? '<dl class="kv"><dt>采集状态</dt><dd data-source-state></dd><dt>本机通知</dt><dd data-source-count></dd><dt>最近检查</dt><dd data-source-checked></dd></dl>' : ''}
+<div class="pills">${c.requiresAuth ? `<button class="pill" data-identity>${icon('key', 15)}<span data-auth-label>去认证</span></button>` : ''}<button class="pill" data-mute>${icon('bell', 15)}${c.notify === 'mute' ? '取消静音' : '静音'}</button></div>
+</div>`, { onClose: () => { stopped = true; clearTimeout(timer) } })
+    if (c.sourceId) {
+      const drawSource = () => {
+        if (stopped) return
+        const source = sourceStates.get(c.sourceId)
+        pop.querySelector('[data-source-state]').textContent = sourceStateLabel(c.sourceId)
+        const count = Number.isSafeInteger(source?.totalCount) ? source.totalCount : null
+        const complete = Number.isSafeInteger(source?.completeCount) ? source.completeCount : null
+        pop.querySelector('[data-source-count]').textContent = count === null ? '—' : `${count} 条${complete === null ? '' : ` · ${complete} 篇正文`}`
+        const checked = new Date(source?.lastCheckedAt)
+        pop.querySelector('[data-source-checked]').textContent = source?.lastCheckedAt && Number.isFinite(checked.getTime()) ? checked.toLocaleString('zh-CN', { hour12: false }) : '—'
+        const label = pop.querySelector('[data-auth-label]')
+        if (label) label.textContent = !source || ['auth_required', 'auth_expired'].includes(source.state) ? '去认证' : '身份认证'
+      }
+      const pollSource = async () => { await refreshSourceStates(); if (stopped) return; drawSource(); timer = setTimeout(pollSource, 10_000) }
+      drawSource()
+      pollSource()
+    }
     pop.addEventListener('click', e => {
+      if (e.target.closest('[data-identity]')) return openIdentityAuth(anchor)
       if (!e.target.closest('[data-mute]')) return
       store.setChannel(c.id, { notify: c.notify === 'mute' ? 'all' : 'mute' })
       closeOverlay()
@@ -255,6 +302,7 @@ function openMeMenu(anchor) {
 <button class="mi" data-go="reminders">${icon('bell', 16)}提醒<span class="hint">${count || ''}</span></button>
 <button class="mi" data-go="bot">${icon('sparkle', 16)}形象与称呼</button>
 <button class="mi" data-go="notify">${icon('rss', 16)}主动消息</button>
+<button class="mi" data-go="auth">${icon('key', 16)}身份认证</button>
 <button class="mi" data-go="look">${icon('image', 16)}外观</button>
 <div class="pop-sep"></div>
 <button class="mi" data-go="about">${icon('settings', 16)}关于与重置</button>`, { place: 'above' })
@@ -356,6 +404,7 @@ function openSearch(anchor) {
 
 const settingsApi = {
   store,
+  openIdentityAuth,
   reminder(id, patch) { store.remindersChanged(updateReminder(store.state, id, patch)) },
   demoReminder() {
     const r = addReminder(store.state, { title: '完成数学作业', dueAt: Date.now() + 5000, channelId: 'bot' })
@@ -385,6 +434,7 @@ applyPrefs()
 sidebar.render()
 select(active)
 startGaze(document)
+refreshSourceStates()
 
 startFeed({
   adapters: services.sources,

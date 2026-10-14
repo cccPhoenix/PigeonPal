@@ -368,6 +368,31 @@ input, textarea, select { font: inherit; color: inherit; }
 .dialog .btns { justify-content: flex-end; margin-top: 6px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
 
+/* Identity authentication shares the app's dialog, card and theme tokens. */
+.auth-dialog { width: min(420px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; }
+.auth-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.auth-heading > div:nth-child(2) { flex: 1; }
+.auth-heading h3 { margin: 0; }
+.auth-heading p { margin: 1px 0 0; font-size: 12px; color: var(--ink-3); }
+.auth-symbol { width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
+.auth-dialog .auth-intro { margin-bottom: 12px; }
+.auth-status { display: flex; align-items: flex-start; gap: 9px; padding: 12px 14px; border-radius: 12px; background: var(--hover); color: var(--ink-2); font-size: 13px; line-height: 21px; margin-bottom: 18px; }
+.auth-status > .ic, .auth-spinner { margin-top: 2px; flex: none; }
+.auth-status[data-tone="success"] { background: var(--accent-soft); color: var(--accent); }
+.auth-status[data-tone="error"] { color: var(--danger); }
+.auth-spinner { width: 16px; height: 16px; border: 2px solid var(--line-2); border-top-color: var(--accent); border-radius: 50%; animation: auth-spin 1s linear infinite; }
+@keyframes auth-spin { to { transform: rotate(360deg); } }
+.auth-details { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px 16px; margin: 0 0 20px; font-size: 13px; }
+.auth-details dt { color: var(--ink-3); }
+.auth-details dd { margin: 0; overflow-wrap: anywhere; }
+.auth-password { position: relative; }
+.auth-password .input { padding-right: 56px; }
+.auth-reveal { position: absolute; inset: 3px 4px 3px auto; padding: 0 10px; border-radius: 8px; font-size: 12px; color: var(--ink-2); }
+.auth-reveal:hover { background: var(--hover); }
+.auth-help { color: var(--ink-3); font-size: 12px; line-height: 20px; margin: -2px 0 18px; }
+.auth-dialog button:disabled { opacity: .5; cursor: default; }
+.auth-dialog button:disabled:active { transform: none; }
+
 .toast {
   position: fixed; left: 50%; bottom: 108px; translate: -50% 12px; z-index: 60;
   padding: 8px 16px; border-radius: 999px;

@@ -1,0 +1,2 @@
+# Only the authentication vault needs this package; crawler CLI remains stdlib.
+cryptography>=50.0.1,<51
