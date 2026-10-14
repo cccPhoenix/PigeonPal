@@ -12,4 +12,8 @@ data/
 crawler-state.json
 crawler-state.json.bak
 crawler.lock
+notice-ai.json
+notice-ai.json.bak
+runtime-state.json
+runtime-state.json.bak
 .claude/settings.local.json

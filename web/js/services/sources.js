@@ -6,27 +6,37 @@
 //   }
 //   Item = { id, title, url, publishedAt, kind?, eventAt?, eventEnd?, where?, summary? }
 //
-// The feed polls every adapter, drops items it has already delivered (by id) and hands
-// new ones to `onItem`. The bot's wording for an item comes from `noticeCopy`, which the
-// model replaces later. Everything below the line is demo data, not a real school.
+// The feed polls local crawler adapters and delivers new notice revisions to `onItem`.
+// Structured AI results come from the local service; legacy demo helpers remain below.
 
 import { clock, dayLabel } from '../ui/format.js'
 
+export const NOTICE_CATEGORIES = {
+  academic: '学术报告', teaching: '教学教务', activity: '校园活动',
+  deadline: '申请／报名', service: '校园服务', other: '其他通知',
+}
+
 export function startFeed({ adapters, seen, onItem, intervalMs = 60_000 }) {
   let stopped = false
+  let polling = false
   const poll = async () => {
-    for (const adapter of adapters) {
-      try {
-        const items = await adapter.fetch()
-        for (const item of items.sort((a, b) => a.publishedAt - b.publishedAt)) {
-          if (stopped || seen.has(item.id)) continue
-          seen.add(item.id)
-          onItem(adapter.channelId, item)
+    if (stopped || polling) return
+    polling = true
+    try {
+      for (const adapter of adapters) {
+        try {
+          const items = await adapter.fetch()
+          for (const item of items.sort((a, b) => a.publishedAt - b.publishedAt)) {
+            const key = item.revision ? `${item.id}:${item.revision}` : item.id
+            if (stopped || seen.has(key)) continue
+            onItem(adapter.channelId, item)
+            seen.add(key)
+          }
+        } catch (error) {
+          console.warn(`[feed] ${adapter.id} failed`, error)
         }
-      } catch (error) {
-        console.warn(`[feed] ${adapter.id} failed`, error)
       }
-    }
+    } finally { polling = false }
   }
   poll()
   const timer = setInterval(poll, intervalMs)
@@ -41,6 +51,7 @@ export function eventPhrase(at, now = Date.now()) {
 }
 
 export function noticeCopy(item, now = Date.now()) {
+  if (item.real) return item.summary || `🔔 ${item.title}\n可以点「查看原文」了解详情。`
   const day = item.eventAt ? eventPhrase(item.eventAt, now) : ''
   switch (item.kind) {
     case 'talk': return `🎤 ${day} 有一场报告会！\n{nickname}，在${item.where}，感兴趣可以去听听～`
@@ -50,14 +61,48 @@ export function noticeCopy(item, now = Date.now()) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Demo sources
+export function localAdapters(client) {
+  return LOCAL_CHANNELS.map(channel => ({
+    id: `local-${channel.sourceId}`, channelId: channel.id,
+    async fetch() {
+      const rows = []
+      let offset = 0
+      do {
+        const data = await client.notices(channel.sourceId, offset)
+        if (!Array.isArray(data.items)) throw new Error('Invalid notice list')
+        rows.push(...data.items)
+        offset = data.nextOffset
+      } while (Number.isSafeInteger(offset) && offset > 0)
+      return rows.map(row => {
+        const result = row.analysis?.result || null
+        const exactTime = value => typeof value === 'string' && value.includes('T') && Number.isFinite(Date.parse(value)) ? Date.parse(value) : null
+        return {
+          id: row.id, noticeId: row.id, revision: row.revision, sourceId: row.sourceId, real: true,
+          title: row.title, url: row.url, contentVersion: row.version,
+          publishedDate: row.publishedAt || '',
+          publishedAt: Date.parse(`${row.publishedAt}T00:00:00+08:00`) || Date.parse(row.firstSeenAt) || Date.now(),
+          receivedAt: Date.parse(row.lastChangedAt || row.firstSeenAt),
+          kind: ({ academic: 'talk', activity: 'club', deadline: 'deadline' })[result?.category] || 'notice',
+          category: result?.category || '',
+          summary: result?.summary || '', where: result?.location || '',
+          eventAt: exactTime(result?.eventAt), eventEnd: exactTime(result?.eventEnd),
+          deadlineAt: result?.deadlineAt || null, eventLabel: result?.eventAt || null,
+          audience: result?.audience || [], todos: result?.todos || [], notes: result?.notes || [],
+          analysisState: row.analysis?.state || 'pending',
+        }
+      })
+    },
+  }))
+}
 
 // Stable channels for the local crawler; these are never fed by demo adapters.
 export const LOCAL_CHANNELS = [
   { id: 'src-yunfeng', sourceId: 'yunfeng', title: '云峰通知', emoji: '🏫', tint: '#eef3ee', site: 'yunfeng.zju.edu.cn', url: 'https://yunfeng.zju.edu.cn/on/53544/list.psp', every: '每 5 分钟', requiresAuth: false },
   { id: 'src-itc', sourceId: 'itc', title: 'ITC 通知', emoji: '💻', tint: '#eaf2ff', site: 'itc.zju.edu.cn', url: 'https://itc.zju.edu.cn/90618/list.psp', every: '每 5 分钟', requiresAuth: true },
 ]
+
+// ---------------------------------------------------------------------------
+// Legacy demo sources (not used by the application)
 
 export const DEMO_CHANNELS = [
   { id: 'talks', title: '学术报告', emoji: '🎤', tint: '#fff1e5', site: '示例 · 学术报告页', every: '每 30 分钟' },

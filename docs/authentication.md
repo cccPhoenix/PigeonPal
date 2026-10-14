@@ -59,7 +59,7 @@ python scripts/serve.py --data-dir "D:\PigeonPal-data" --auth-dir "D:\PigeonPal-
 
 ## 数据范围
 
-凭据只提交给学校官方 ZJUAM，认证使用 HTTPS，不传给团队云端或 LLM。ZJUAM 会话及各来源会话只保存在内存，遵守 Cookie 域名、路径和有效期，并限定到相应学校主机。账号密码、Cookie 和认证票据不进入源码、通知 JSON、普通日志或浏览器 localStorage。来源卡显示真实采集状态，聊天和频道消息仍是演示内容；通知正文尚未接入消息流或 LLM。
+凭据只提交给学校官方 ZJUAM，认证使用 HTTPS，不传给团队云端或 LLM。ZJUAM 会话及各来源会话只保存在内存，遵守 Cookie 域名、路径和有效期，并限定到相应学校主机。账号密码、Cookie 和认证票据不进入源码、通知 JSON、普通日志或浏览器 localStorage。配置 DeepSeek 并允许 ITC 处理后，通知正文经白名单选择和脱敏后交给模型；校园凭据始终隔离。模型配置在认证目录的独立 `ai/` 子目录，解除校园绑定不删除 API 配置，见 [AI 说明](ai.md)。
 
 本方案避免明文保存和误传单个密文文件；能读取 `.env` 与 `.auth-key` 两个文件的人也能解密。两个文件都应保留在个人电脑上，不加入 Git 或通知导出。
 

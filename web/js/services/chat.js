@@ -5,10 +5,9 @@
 //   { type: 'message', text }                   one bubble from the bot
 //   { type: 'action', name, args }              ask the app to change state
 //       'profile.update'  { nickname }
-//       'reminder.create' { title, dueAt }
+//       'reminder.upsert' { id, title, dueAt, ... }
 //
-// A real model backend implements the same generator (streamed over fetch/SSE, tool
-// calls mapped to actions); the UI does not change. This file is the canned demo.
+// The app uses createAIChat. The old demo remains only for the legacy unit tests.
 
 import { parseWhen, reminderTitle } from './parse-time.js'
 import { whenLabel } from '../ui/format.js'
@@ -28,6 +27,29 @@ function* say(...lines) {
 export const ALARM = '闹钟'
 
 export const GREETING = ['嗨～我是{name} 👋', '以后学校里有什么新鲜事，我会第一时间来告诉你。', '对了，我该怎么称呼你呀？']
+
+export function createAIChat(client) {
+  return {
+    async *respond({ text, channelId, state, requestId, quoteId, history }) {
+      yield { type: 'typing', ms: 0 }
+      const quoted = quoteId && Object.values(state.messages).flat().find(message => message.id === quoteId)
+      const result = await client.chat({ text, channelId, requestId,
+        profile: { botName: state.profile.botName, nickname: state.profile.nickname },
+        history, ...(quoted ? { quotedText: String(quoted.text).slice(0, 4000) } : {}),
+        ...(quoted?.item?.noticeId ? { noticeId: quoted.item.noticeId } : {}) })
+      if (!Array.isArray(result.events)) throw new Error('Invalid chat events')
+      for (const event of result.events) {
+        if (event.type === 'action' && ['profile.update', 'reminder.upsert'].includes(event.name)) yield event
+        else if (event.type === 'message' && typeof event.text === 'string') {
+          // Retain the entire answer while keeping persisted bubbles manageable.
+          for (let offset = 0; offset < event.text.length; offset += 1800) {
+            yield { type: 'message', text: event.text.slice(offset, offset + 1800) }
+          }
+        }
+      }
+    },
+  }
+}
 
 export function createDemoChat() {
   return {

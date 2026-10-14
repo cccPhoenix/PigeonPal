@@ -6,6 +6,7 @@ import argparse
 from contextlib import ExitStack
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import hmac
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -13,7 +14,7 @@ import secrets
 import sys
 import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from crawlers.engine import CrawlEngine
 from crawlers.http import CrawlFailure, SlowClient
@@ -23,6 +24,11 @@ from local_auth.manager import AuthActionError, AuthManager
 from local_auth.site_sessions import SiteSessionError, SiteSessionProvider
 from local_auth.vault import CredentialVault
 from pigeonpal_crawler import default_data_dir, single_writer
+from notice_ai.chat import ChatService
+from notice_ai.config import AISettings
+from notice_ai.runtime import RuntimeStore
+from notice_ai.schema import AIError
+from notice_ai.service import NoticeProcessor
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
@@ -49,15 +55,77 @@ class LocalBackend:
         )
         self.token = secrets.token_urlsafe(32)
         self.stop = threading.Event()
+        self.ai_settings = AISettings(auth_dir / "ai")
+        self.runtime = RuntimeStore(data_dir / "runtime-state.json")
+        self.ai = NoticeProcessor(self.store, data_dir / "notice-ai.json", self.ai_settings.config,
+                                  on_result=self.runtime.schedule_deadline)
+        self.chat = ChatService(self.ai, self.runtime)
         self.engine = CrawlEngine(self.store, list(SOURCES), auth=self.site_auth, sleep=self._sleep,
                                   client_factory=lambda host, protected, session: SlowClient(
                                       host, protected, session, sleep=self._sleep),
                                   report=lambda message: print(message, flush=True))
         self.worker_error = None
         self.thread = None
+        self.reminder_thread = None
         if start_worker:
             self.thread = threading.Thread(target=self._work, name="pigeonpal-crawler", daemon=True)
             self.thread.start()
+            self.ai.start()
+            self.reminder_thread = threading.Thread(target=self._reminders, name="pigeonpal-reminders", daemon=True)
+            self.reminder_thread.start()
+
+    def _reminders(self):
+        next_reconcile = 0
+        failed = False
+        while not self.stop.is_set():
+            try:
+                self.runtime.tick()
+                if time.time() >= next_reconcile:
+                    self.ai.reconcile_deadlines()
+                    next_reconcile = time.time() + 30
+                failed = False
+            except Exception:
+                if not failed:
+                    print("reminders: reminder_worker_error", file=sys.stderr, flush=True)
+                failed = True
+            self.stop.wait(10 if failed else 1)
+
+    def save_ai(self, body):
+        result = self.ai_settings.save(body)
+        self.ai.configure(self.ai_settings.config)
+        try:
+            self.ai.reconcile_deadlines()
+        except AIError:
+            # Configuration itself was saved successfully. The independent
+            # reminder worker retries this reconciliation without another LLM call.
+            self.ai.last_error = "reminder_storage_error"
+        return result
+
+    def clear_ai(self):
+        result = self.ai_settings.clear()
+        self.ai.configure(self.ai_settings.config)
+        return result
+
+    def notices(self, source_id=None, limit=100, offset=0):
+        if source_id is not None and source_id not in SOURCES:
+            raise AIError("invalid_source", 400)
+        if not 1 <= limit <= 100 or offset < 0:
+            raise AIError("invalid_input", 400)
+        rows = self.store.export_items(source_id)
+        items = []
+        for row in rows[offset:offset + limit]:
+            items.append({key: row[key] for key in ("id", "sourceId", "title", "url", "publishedAt", "state", "version", "contentHash", "lastChangedAt", "firstSeenAt")})
+            analysis = self.ai.analysis(row)
+            items[-1]["analysis"] = analysis
+            digest = hashlib.sha256(json.dumps(analysis.get("result"), sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+            items[-1]["revision"] = f"{row['version']}:{row['contentHash']}:{digest}"
+        return {"items": items, "total": len(rows), "nextOffset": offset + limit if offset + limit < len(rows) else None}
+
+    def notice_detail(self, notice_id):
+        row = self.store.get_notice(notice_id)
+        if row is None:
+            raise AIError("notice_not_found", 404)
+        return {**row, "analysis": self.ai.analysis(row)}
 
     def _sleep(self, seconds):
         if self.stop.wait(seconds):
@@ -131,9 +199,12 @@ class LocalBackend:
 
     def close(self):
         self.stop.set()
+        self.ai.close()
         self.auth.close()
         if self.thread is not None:
             self.thread.join(timeout=35)
+        if self.reminder_thread is not None:
+            self.reminder_thread.join(timeout=2)
         self.engine.close()
         self.site_auth.close()
         self.store.close()
@@ -194,7 +265,8 @@ def handler_for(backend):
 
         def do_GET(self):
             try:
-                path = urlsplit(self.path).path
+                address = urlsplit(self.path)
+                path, query = address.path, parse_qs(address.query)
                 if path == "/api/bootstrap":
                     if self._allowed(token=False):
                         self._json(200, {"csrfToken": backend.token})
@@ -205,10 +277,34 @@ def handler_for(backend):
                         self._json(200, backend.auth.status())
                     elif path == "/api/sources":
                         self._json(200, backend.source_status())
+                    elif path == "/api/ai/settings":
+                        self._json(200, backend.ai_settings.snapshot())
+                    elif path == "/api/ai/status":
+                        self._json(200, backend.ai.status())
+                    elif path == "/api/notices":
+                        try:
+                            limit, offset = int(query.get("limit", ["100"])[0]), int(query.get("offset", ["0"])[0])
+                        except ValueError:
+                            raise AIError("invalid_input", 400) from None
+                        self._json(200, backend.notices(query.get("source", [None])[0], limit, offset))
+                    elif path == "/api/notices/detail":
+                        self._json(200, backend.notice_detail(query.get("noticeId", [""])[0]))
+                    elif path == "/api/reminders":
+                        self._json(200, {"reminders": backend.runtime.reminders()})
+                    elif path == "/api/events":
+                        try:
+                            after = int(query.get("after", ["0"])[0])
+                            if after < 0:
+                                raise ValueError
+                        except ValueError:
+                            raise AIError("invalid_input", 400) from None
+                        self._json(200, backend.runtime.events(after))
                     else:
                         self._json(404, {"error": "not_found"})
                 elif self._allowed(token=False):
                     super().do_GET()
+            except AIError as error:
+                self._json(error.status, {"error": error.code})
             except (BrokenPipeError, ConnectionResetError):
                 pass
             except Exception:
@@ -225,7 +321,9 @@ def handler_for(backend):
                     length = int(self.headers.get("Content-Length", "0"))
                 except ValueError:
                     length = 0
-                if not 0 < length <= MAX_BODY:
+                path = urlsplit(self.path).path
+                maximum = 262144 if path in {"/api/chat", "/api/reminders/import"} else MAX_BODY
+                if not 0 < length <= maximum:
                     self._json(413, {"error": "invalid_body_size"})
                     return
                 try:
@@ -235,7 +333,6 @@ def handler_for(backend):
                 except (UnicodeError, ValueError):
                     self._json(400, {"error": "invalid_input"})
                     return
-                path = urlsplit(self.path).path
                 if path == "/api/auth/login":
                     result = backend.auth.start_login(body.get("username"), body.get("password"), body.get("requestId"))
                     body.clear()
@@ -246,9 +343,31 @@ def handler_for(backend):
                     self._json(200, backend.auth.cancel(body.get("requestId")))
                 elif path == "/api/auth/unbind":
                     self._json(200, backend.auth.unbind())
+                elif path == "/api/ai/settings":
+                    result = backend.save_ai(body)
+                    body.clear()
+                    self._json(200, result)
+                elif path == "/api/ai/clear":
+                    self._json(200, backend.clear_ai())
+                elif path == "/api/ai/check":
+                    self._json(200, backend.ai.client.check_connection())
+                elif path == "/api/ai/process":
+                    if set(body) - {"noticeId", "force"}:
+                        raise AIError("invalid_input", 400)
+                    result = backend.ai.submit(body.get("noticeId"), force=body.get("force", False))
+                    self._json(200 if result.get("cached") else 202, result)
+                elif path == "/api/chat":
+                    self._json(200, backend.chat.respond(body))
+                elif path == "/api/reminders/create":
+                    self._json(201, {"reminder": backend.runtime.create(body.get("title"), body.get("dueAt"),
+                               body.get("channelId", "bot"), body.get("noticeId"))})
+                elif path == "/api/reminders/update":
+                    self._json(200, {"reminder": backend.runtime.update(body.get("id"), body.get("patch"))})
+                elif path == "/api/reminders/import":
+                    self._json(200, {"reminders": backend.runtime.import_legacy(body.get("reminders"))})
                 else:
                     self._json(404, {"error": "not_found"})
-            except AuthActionError as error:
+            except (AuthActionError, AIError) as error:
                 self._json(error.status, {"error": error.code})
             except (BrokenPipeError, ConnectionResetError):
                 pass

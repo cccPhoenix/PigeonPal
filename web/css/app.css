@@ -366,6 +366,21 @@ input, textarea, select { font: inherit; color: inherit; }
 .dialog > p { margin: 0 0 16px; font-size: 13px; color: var(--ink-2); }
 .dialog .input { max-width: none; width: 100%; }
 .dialog .btns { justify-content: flex-end; margin-top: 6px; }
+.api-dialog { width: min(540px, calc(100vw - 32px)); border-radius: 16px; max-height: calc(100dvh - 32px); overflow-y: auto; }
+.api-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+.api-heading p { margin: 6px 0 0; font-size: 13px; line-height: 1.6; color: var(--ink-2); }
+.api-grid { display: grid; grid-template-columns: 1fr; }
+.api-option { display: flex; align-items: center; gap: 10px; padding: 9px 0; font-size: 13px; cursor: pointer; }
+.api-option input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }
+.api-help { color: var(--ink-3); font-size: 12px; line-height: 1.7; margin: 14px 0 8px; }
+.api-status { font-size: 13px; line-height: 1.6; min-height: 24px; margin: 8px 0 16px; color: var(--ink-2); }
+.api-status.error { color: var(--danger); }
+.api-spacer { flex: 1; }
+.notice-dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; }
+.notice-body { margin: 12px 0 18px; font-size: 13px; color: var(--ink-2); }
+.notice-body summary { cursor: pointer; margin-bottom: 10px; }
+.notice-body > div { line-height: 1.8; overflow-wrap: anywhere; }
+.api-dialog button:disabled, .api-dialog input:disabled { opacity: .5; cursor: default; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
 
 /* Identity authentication shares the app's dialog, card and theme tokens. */

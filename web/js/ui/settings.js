@@ -4,12 +4,14 @@ import { pendingReminders } from '../reminders.js'
 import { icon } from './icons.js'
 import { escapeHtml, whenLabel } from './format.js'
 import { sheet, closeOverlay, toast } from './overlays.js'
+import { apiErrorText } from '../services/api.js'
 
 const PAGES = [
   ['bot', '形象与称呼', 'sparkle'],
   ['reminders', '提醒', 'bell'],
   ['notify', '主动消息', 'rss'],
   ['auth', '身份认证', 'key'],
+  ['api', 'API 设置', 'settings'],
   ['look', '外观', 'image'],
   ['about', '关于', 'settings'],
 ]
@@ -17,6 +19,7 @@ const PAGES = [
 // Settings sheet. `api` is what it may change: { store, reminder(id, patch), demoReminder(), reset() }
 export function openSettings(api, { page = 'bot', opener } = {}) {
   if (page === 'auth') return api.openIdentityAuth?.(opener)
+  if (page === 'api') return api.openApiSettings?.(opener)
   const { store } = api
   const box = sheet(`<nav class="sheet-nav"><h2>设置</h2>${PAGES.map(([id, label, ic]) => `<button class="nav-item" data-page="${id}">${icon(ic, 16)}${label}</button>`).join('')}</nav>
 <div class="sheet-body"></div>
@@ -47,7 +50,7 @@ export function openSettings(api, { page = 'bot', opener } = {}) {
   ${r.status === 'pending' ? `<input class="input" type="datetime-local" data-rem-time value="${toLocalInput(r.dueAt)}" aria-label="修改时间"><button class="tool" data-rem-act="cancel" aria-label="取消提醒">${icon('trash', 16)}</button>` : ''}
 </div>`
       return `<h3>提醒</h3>
-<p class="note">直接在聊天里说「今晚九点提醒我写数学作业」就能新建提醒。现在的提醒只在页面打开时生效，后台调度接入后会改成常驻。</p>
+<p class="note">直接在聊天里说「今晚九点提醒我写数学作业」就能新建提醒。保持本机服务运行，到点会记录提醒；重新打开页面也能收到。</p>
 <div class="rem-list">${list.length ? list.map(row).join('') : '<p class="muted">暂时没有待办的提醒</p>'}</div>
 ${past.length ? `<div class="pop-title" style="padding:18px 0 4px">已结束</div><div class="rem-list">${past.map(row).join('')}</div>` : ''}
 <div class="btns" style="margin-top:18px"><button class="btn" data-set="demo-reminder">演示：5 秒后来一条提醒</button></div>`
@@ -56,7 +59,7 @@ ${past.length ? `<div class="pop-title" style="padding:18px 0 4px">已结束</di
     notify: () => `<h3>主动消息</h3>
 <div class="toggle-row"><div><div class="t">让${escapeHtml(p().botName)}主动找我</div><div class="d">有新通知或提醒到点时发消息</div></div>${sw('proactive', p().proactive)}</div>
 ${store.state.channels.filter(c => c.kind === 'source').map(c => `<div class="toggle-row"><div><div class="t">${escapeHtml(c.emoji)} ${escapeHtml(c.title)}</div><div class="d">${escapeHtml(c.site)} · ${escapeHtml(c.every)}</div></div>${sw(`ch:${c.id}`, c.notify !== 'mute')}</div>`).join('')}
-<div class="field" style="margin-top:18px"><span class="label">安静时段</span><div class="inline"><input class="input" type="time" data-field="quietStart" value="${p().quietStart}" style="width:120px"><span class="muted">到</span><input class="input" type="time" data-field="quietEnd" value="${p().quietEnd}" style="width:120px"></div><span class="help">这段时间只收消息不打扰。调度接入后生效。</span></div>
+<div class="field" style="margin-top:18px"><span class="label">安静时段</span><div class="inline"><input class="input" type="time" data-field="quietStart" value="${p().quietStart}" style="width:120px"><span class="muted">到</span><input class="input" type="time" data-field="quietEnd" value="${p().quietEnd}" style="width:120px"></div><span class="help">这段时间消息和提醒仍会保留，不弹出系统通知。</span></div>
 <div class="btns"><button class="btn" data-set="system-notify">${typeof Notification !== 'undefined' && Notification.permission === 'granted' ? '系统通知已开启' : '开启系统通知'}</button></div>`,
 
     look: () => `<h3>外观</h3>
@@ -64,24 +67,25 @@ ${store.state.channels.filter(c => c.kind === 'source').map(c => `<div class="to
 <div class="field"><span class="label">动效</span>${seg('motion', [['lively', '灵动'], ['calm', '克制'], ['off', '关闭']])}<span class="help">克制：只保留眨眼；关闭：完全静止。系统开启「减少动态效果」时也会静止。</span></div>`,
 
     about: () => `<h3>关于</h3>
-<p class="note">PigeonPal 校园伙伴。云峰与 ITC 来源由本机爬虫采集；聊天回复和示例频道仍为演示数据。校园账号可在「身份认证」中绑定。</p>
-<div class="btns"><a class="btn" href="./lab.html" target="_blank" style="display:inline-grid;place-items:center;text-decoration:none">打开形象实验室</a><button class="btn danger" data-set="reset">清空本地数据，重新开始</button></div>`,
+<p class="note">PigeonPal 校园伙伴。支持 DeepSeek 对话、云峰与 ITC 通知整理和本机提醒。保持本机服务运行即可持续采集与调度；API 和校园绑定在各自设置中管理。</p>
+<div class="btns"><a class="btn" href="./lab.html" target="_blank" style="display:inline-grid;place-items:center;text-decoration:none">打开形象实验室</a><button class="btn danger" data-set="reset">重置界面记录</button></div>`,
   }
 
   function show(id) {
     if (id === 'auth') return api.openIdentityAuth?.(opener)
+    if (id === 'api') return api.openApiSettings?.(opener)
     currentPage = id
     for (const n of box.querySelectorAll('[data-page]')) n.setAttribute('aria-current', String(n.dataset.page === id))
     body.innerHTML = `<section>${pages[id]()}</section>`
   }
 
-  box.addEventListener('click', e => {
+  box.addEventListener('click', async e => {
     const t = e.target.closest('button')
     if (!t) return
     if (t.dataset.page) return show(t.dataset.page)
     if (t.dataset.set === 'close') return closeOverlay()
-    if (t.dataset.set === 'reset') { if (confirm('清空所有本地消息、提醒和设置？')) { closeOverlay(); api.reset() } return }
-    if (t.dataset.set === 'demo-reminder') { api.demoReminder(); toast('5 秒后见'); closeOverlay(); return }
+    if (t.dataset.set === 'reset') { if (confirm('重置本页聊天记录和外观设置？本机通知、提醒、校园绑定和 API 配置会保留。')) { closeOverlay(); api.reset() } return }
+    if (t.dataset.set === 'demo-reminder') { try { await api.demoReminder(); toast('5 秒后见'); closeOverlay() } catch (error) { toast(apiErrorText(error)) } return }
     if (t.dataset.set === 'system-notify') { if (typeof Notification !== 'undefined') Notification.requestPermission().then(() => show(currentPage)); return }
     if (t.dataset.seg) { store.setProfile({ [t.dataset.seg]: t.dataset.v }); return show(currentPage) }
     if (t.dataset.switch) {
@@ -99,12 +103,12 @@ ${store.state.channels.filter(c => c.kind === 'source').map(c => `<div class="to
     if (t.dataset.remAct) {
       const id = t.closest('[data-rem]').dataset.rem
       const status = { done: 'done', reopen: 'pending', cancel: 'cancelled' }[t.dataset.remAct]
-      api.reminder(id, { status })
-      return show(currentPage)
+      try { await api.reminder(id, { status }); show(currentPage) } catch (error) { toast(apiErrorText(error)) }
+      return
     }
   })
   box.addEventListener('dblclick', e => { if (e.target.closest('[data-look="image"]')) box.querySelector('[data-upload]').click() })
-  box.addEventListener('change', e => {
+  box.addEventListener('change', async e => {
     const t = e.target
     if (t.dataset.field) {
       const value = t.value.trim()
@@ -113,7 +117,7 @@ ${store.state.channels.filter(c => c.kind === 'source').map(c => `<div class="to
       toast('已保存')
     }
     if (t.dataset.remTime !== undefined) {
-      try { api.reminder(t.closest('[data-rem]').dataset.rem, { dueAt: new Date(t.value).getTime() }); toast('时间改好了'); show(currentPage) } catch (err) { toast(err.message) }
+      try { await api.reminder(t.closest('[data-rem]').dataset.rem, { dueAt: new Date(t.value).getTime() }); toast('时间改好了'); show(currentPage) } catch (err) { toast(apiErrorText(err)) }
     }
     if (t.dataset.upload !== undefined && t.files?.[0]) {
       const file = t.files[0]

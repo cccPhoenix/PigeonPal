@@ -1,7 +1,7 @@
 import { markHTML, setMarkState } from '../mark/index.js'
 import { icon } from './icons.js'
 import { escapeHtml, richText, plain, clock, whenLabel } from './format.js'
-import { eventPhrase } from '../services/sources.js'
+import { eventPhrase, NOTICE_CATEGORIES } from '../services/sources.js'
 
 const GROUP_GAP = 5 * 60_000
 const DIVIDER_GAP = 30 * 60_000
@@ -26,15 +26,19 @@ export function createTranscript({ root, jump, store, onAction }) {
   function noticeCard(m) {
     const item = m.item ?? {}
     const channel = store.channel(m.channelId)
-    const reminder = store.state.reminders.find(r => r.noticeId === m.id && r.status === 'pending')
+    const reminder = store.state.reminders.find(r => (r.noticeId === m.id || r.noticeId === item.noticeId) && r.status === 'pending')
     const time = item.eventAt ? `${eventPhrase(item.eventAt)}${item.eventEnd ? ` – ${clock(item.eventEnd)}` : ''}` : ''
     return `<div class="card">
-  <div class="card-src"><span>${escapeHtml(channel?.emoji ?? '🔔')}</span><span>${escapeHtml(channel?.title ?? '')}</span><span>·</span><span>示例</span></div>
+  <div class="card-src"><span>${escapeHtml(channel?.emoji ?? '🔔')}</span><span>${escapeHtml(channel?.title ?? '')}</span><span>·</span><span>${item.real ? (item.analysisState === 'ready' ? '已整理' : '原站通知') : '示例'}</span></div>
   <div class="card-title">${escapeHtml(item.title ?? '')}</div>
+  ${NOTICE_CATEGORIES[item.category] ? `<div class="card-meta"><span>${escapeHtml(NOTICE_CATEGORIES[item.category])}</span></div>` : ''}
+  ${item.real && !item.publishedDate ? '<div class="card-meta"><span>原站发布日期待补齐</span></div>' : ''}
+  ${!item.eventAt && item.eventLabel ? `<div class="card-meta"><div>${icon('clock', 15)}<span>活动日期：${escapeHtml(item.eventLabel)}</span></div></div>` : ''}
+  ${item.deadlineAt ? `<div class="card-meta"><div>${icon('clock', 15)}<span>截止：${escapeHtml(item.deadlineAt.replace('T', ' '))}</span></div></div>` : ''}
   ${time || item.where ? `<div class="card-meta">${time ? `<div>${icon('clock', 15)}<span>${escapeHtml(time)}</span></div>` : ''}${item.where ? `<div>${icon('pin', 15)}<span>${escapeHtml(item.where)}</span></div>` : ''}</div>` : ''}
   <div class="pills">
     <button class="pill" data-act="open-notice" data-id="${escapeHtml(m.id)}">${icon('link', 15)}查看原文</button>
-    ${item.eventAt && item.eventAt > Date.now() || reminder
+    ${item.real || item.eventAt && item.eventAt > Date.now() || reminder
       ? `<button class="pill${reminder ? ' on' : ''}" data-act="remind-notice" data-id="${escapeHtml(m.id)}">${icon('bell', 15)}${reminder ? `已提醒 · ${escapeHtml(whenLabel(reminder.dueAt))}` : '提醒我'}</button>`
       : ''}
   </div>
@@ -167,6 +171,14 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
     if (pills && next) pills.replaceWith(next)
   }
 
+  function refreshNotice(message) {
+    const row = inner?.querySelector(`.row[data-id="${CSS.escape(message.id)}"]`)
+    if (!row) return
+    row.querySelector('.bubble').innerHTML = richText(message.text, profile())
+    const card = row.querySelector('.card')
+    if (card) card.replaceWith(toNode(noticeCard(message)))
+  }
+
   function flash(messageId) {
     const row = inner?.querySelector(`.row[data-id="${CSS.escape(messageId)}"]`)
     if (!row) return false
@@ -195,7 +207,7 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
   })
 
   return {
-    render, append, patch, flash, showTyping, hideTyping,
+    render, append, patch, flash, showTyping, hideTyping, refreshNotice,
     get channelId() { return channelId },
     refreshMarks() { if (channelId) render(channelId) },
   }

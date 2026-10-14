@@ -1,9 +1,9 @@
 import { createStore } from './store.js'
-import { addReminder, updateReminder, dueReminders, markDelivered, pendingReminders } from './reminders.js'
+import { newId, pendingReminders } from './reminders.js'
 import { markHTML, setMarkState, startGaze } from './mark/index.js'
-import { createDemoChat, GREETING, ALARM } from './services/chat.js'
-import { startFeed, demoAdapters, noticeCopy, eventPhrase } from './services/sources.js'
-import { startScheduler, systemNotify } from './services/scheduler.js'
+import { createAIChat, GREETING } from './services/chat.js'
+import { startFeed, localAdapters, noticeCopy, eventPhrase, NOTICE_CATEGORIES } from './services/sources.js'
+import { systemNotify } from './services/scheduler.js'
 import { createSidebar } from './ui/sidebar.js'
 import { createHeader } from './ui/header.js'
 import { createTranscript } from './ui/transcript.js'
@@ -11,16 +11,18 @@ import { createComposer } from './ui/composer.js'
 import { openSettings } from './ui/settings.js'
 import { createAuthClient } from './services/auth.js'
 import { openIdentityAuth as showIdentityAuth } from './ui/auth.js'
+import { createApiClient, apiErrorText } from './services/api.js'
+import { openApiSettings as showApiSettings } from './ui/api-settings.js'
 import { popover, dialog, closeOverlay, overlayFor, toast } from './ui/overlays.js'
 import { icon } from './ui/icons.js'
 import { escapeHtml, plain, whenLabel, clock, personalize } from './ui/format.js'
 
 // ---------------------------------------------------------------- services
-// Swap these three for real backends; the UI only knows their contracts.
+const apiClient = createApiClient()
 const services = {
-  chat: createDemoChat(),
-  sources: demoAdapters(),
-  feedInterval: 3000,
+  chat: createAIChat(apiClient),
+  sources: localAdapters(apiClient),
+  feedInterval: 5000,
 }
 
 const store = createStore()
@@ -28,12 +30,14 @@ const $ = id => document.getElementById(id)
 const app = $('app')
 const identityClient = createAuthClient()
 const sourceStates = new Map()
+let aiStatus = null
 let sourceStatusError = false
 let sourceRefresh = null
 
 async function refreshSourceStates() {
   if (sourceRefresh) return sourceRefresh
-  sourceRefresh = identityClient.sources().then(sources => {
+  sourceRefresh = Promise.all([identityClient.sources(), apiClient.status()]).then(([sources, ai]) => {
+    aiStatus = ai
     sourceStatusError = false
     for (const source of sources) if (source && ['yunfeng', 'itc'].includes(source.id)) sourceStates.set(source.id, source)
   }).catch(() => { sourceStatusError = true }).finally(() => { sourceRefresh = null })
@@ -42,6 +46,10 @@ async function refreshSourceStates() {
 
 function openIdentityAuth(opener) {
   showIdentityAuth({ client: identityClient, opener, onChange: refreshSourceStates })
+}
+
+function openApiSettings(opener) {
+  showApiSettings({ client: apiClient, opener, onChange: refreshSourceStates })
 }
 
 function sourceStateLabel(sourceId) {
@@ -100,6 +108,7 @@ store.on('message', m => {
   if (m.channelId === active && document.visibilityState === 'visible') store.markRead(m.channelId)
 })
 store.on('unread', id => sidebar.update(id))
+store.on('message-updated', message => { sidebar.update(message.channelId); transcript.refreshNotice(message) })
 store.on('channels', () => sidebar.render())
 store.on('profile', patch => {
   applyPrefs()
@@ -111,7 +120,7 @@ store.on('profile', patch => {
 })
 store.on('reminders', r => {
   if (!r) return
-  for (const m of store.state.messages[active] ?? []) if (m.reminderId === r.id || m.id === r.noticeId) transcript.patch(m.id)
+  for (const m of store.state.messages[active] ?? []) if (m.reminderId === r.id || m.id === r.noticeId || m.item?.noticeId === r.noticeId) transcript.patch(m.id)
 })
 store.on('save-failed', () => toast('本地存储不可用，刷新后记录会丢失'))
 store.on('reset', () => { sessionStorage.removeItem('pp.active'); location.reload() })
@@ -121,6 +130,11 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 function announce(channelId, title, body) {
   const c = store.channel(channelId)
   if (!store.state.profile.proactive || c?.notify === 'mute') return
+  const p = store.state.profile
+  const now = clock(Date.now())
+  const quiet = p.quietStart === p.quietEnd ? false : p.quietStart < p.quietEnd
+    ? now >= p.quietStart && now < p.quietEnd : now >= p.quietStart || now < p.quietEnd
+  if (quiet) return
   setMarkState(sidebar.botMark(), 'alert')
   if (channelId !== 'bot') sidebar.bump(channelId)
   systemNotify(title, body)
@@ -128,15 +142,16 @@ function announce(channelId, title, body) {
 
 // ------------------------------------------------------------------- chat
 const sleep = ms => new Promise(r => setTimeout(r, ms))
-const pending = new Set() // channels with a reply on the way
+const pending = new Map() // channelId -> number of active reply streams
 const queues = new Map()   // channelId -> { texts, quoteId, timer }
 
 // Short messages sent in a burst get one reply, the way a person reads them.
 function send(text, quoteId) {
   const ch = active
   store.addMessage(ch, { role: 'user', text, ...(quoteId ? { quoteId } : {}) })
-  const q = queues.get(ch) ?? { texts: [], timer: 0 }
+  const q = queues.get(ch) ?? { texts: [], timer: 0, requestId: newId('chat'), firstIndex: store.state.messages[ch].length - 1 }
   q.texts.push(text)
+  if (quoteId) q.quoteId = quoteId
   clearTimeout(q.timer)
   q.timer = setTimeout(() => flush(ch), 900)
   queues.set(ch, q)
@@ -145,13 +160,23 @@ function send(text, quoteId) {
 async function flush(ch) {
   if (pending.has(ch)) { queues.get(ch).timer = setTimeout(() => flush(ch), 600); return }
   const q = queues.get(ch)
+  if (!q) return
   queues.delete(ch)
-  await run(ch, services.chat.respond({ text: q.texts.join('\n'), channelId: ch, state: store.state }))
+  let budget = 18000
+  const history = []
+  for (const message of store.state.messages[ch].slice(0, q.firstIndex).slice(-24).reverse()) {
+    const content = personalize(message.text, store.state.profile).slice(0, 1800)
+    if (content.length > budget) break
+    budget -= content.length
+    history.unshift({ role: message.role === 'bot' ? 'assistant' : 'user', content })
+  }
+  await run(ch, services.chat.respond({ text: q.texts.join('\n'), channelId: ch, state: store.state,
+    requestId: q.requestId, quoteId: q.quoteId, history }))
 }
 
 // Plays a reply stream: typing, bubbles and actions, in order.
 async function run(ch, stream) {
-  pending.add(ch)
+  pending.set(ch, (pending.get(ch) || 0) + 1)
   try {
     await sleep(350)
     for await (const event of stream) {
@@ -166,80 +191,109 @@ async function run(ch, stream) {
       }
     }
   } catch (error) {
-    console.error(error)
-    store.addMessage(ch, { role: 'bot', text: '哎呀，我这边卡了一下，再说一次好吗？' }, { unread: ch !== active })
+    store.addMessage(ch, { role: 'bot', text: apiErrorText(error) }, { unread: ch !== active })
   } finally {
-    pending.delete(ch)
-    if (ch === active) transcript.hideTyping()
+    const remaining = (pending.get(ch) || 1) - 1
+    if (remaining) pending.set(ch, remaining)
+    else pending.delete(ch)
+    if (ch === active && !pending.has(ch)) transcript.hideTyping()
   }
 }
 
 function applyAction(ch, { name, args }) {
   if (name === 'profile.update') store.setProfile({ nickname: args.nickname })
-  if (name === 'reminder.create') {
-    const r = addReminder(store.state, { title: args.title, dueAt: args.dueAt, channelId: ch }, Date.now())
-    store.remindersChanged(r)
-  }
+  if (name === 'reminder.upsert') store.syncReminders([args])
 }
 
 // ------------------------------------------------------------ transcript
-function onAction(act, id, el) {
-  const m = store.message(id)
-  if (act === 'copy' && m) {
-    const text = personalize(m.text, store.state.profile)
-    navigator.clipboard?.writeText(text).then(() => toast('已复制'), () => toast('复制失败，可以手动选中文字'))
-      ?? toast('复制失败，可以手动选中文字')
-  }
-  if (act === 'reply' && m) composer.setQuote(m)
-  if (act === 'jump' && m) { if (m.channelId !== active) select(m.channelId); requestAnimationFrame(() => transcript.flash(m.id)) }
-  if (act === 'open-notice' && m) openNotice(m, el)
-  if (act === 'remind-notice' && m) openNoticeReminder(m, el)
-  if (act === 'reminder-done') {
-    const r = updateReminder(store.state, id, { status: 'done' })
-    store.remindersChanged(r)
-    run(r.channelId, (async function* () { yield { type: 'typing', ms: 500 }; yield { type: 'message', text: pickOne(['搞定！✌️', '棒～', '收到，辛苦啦 🎉']) } })())
-  }
-  if (act === 'reminder-snooze') {
-    const r = updateReminder(store.state, id, { dueAt: Date.now() + 10 * 60_000 })
-    store.remindersChanged(r)
-    run(r.channelId, (async function* () { yield { type: 'typing', ms: 500 }; yield { type: 'message', text: `好，${clock(r.dueAt)} 再叫你` } })())
-  }
+async function onAction(act, id, el) {
+  try {
+    const m = store.message(id)
+    if (act === 'copy' && m) {
+      const text = personalize(m.text, store.state.profile)
+      navigator.clipboard?.writeText(text).then(() => toast('已复制'), () => toast('复制失败，可以手动选中文字'))
+        ?? toast('复制失败，可以手动选中文字')
+    }
+    if (act === 'reply' && m) composer.setQuote(m)
+    if (act === 'jump' && m) { if (m.channelId !== active) select(m.channelId); requestAnimationFrame(() => transcript.flash(m.id)) }
+    if (act === 'open-notice' && m) await openNotice(m, el)
+    if (act === 'remind-notice' && m) openNoticeReminder(m, el)
+    if (act === 'reminder-done') {
+      const { reminder: r } = await apiClient.updateReminder(id, { status: 'done' })
+      store.syncReminders([r])
+      run(r.channelId, (async function* () { yield { type: 'typing', ms: 500 }; yield { type: 'message', text: pickOne(['搞定！✌️', '棒～', '收到，辛苦啦 🎉']) } })())
+    }
+    if (act === 'reminder-snooze') {
+      const { reminder: r } = await apiClient.updateReminder(id, { dueAt: Date.now() + 10 * 60_000 })
+      store.syncReminders([r])
+      run(r.channelId, (async function* () { yield { type: 'typing', ms: 500 }; yield { type: 'message', text: `好，${clock(r.dueAt)} 再叫你` } })())
+    }
+  } catch (error) { toast(apiErrorText(error)) }
 }
 const pickOne = list => list[Math.floor(Math.random() * list.length)]
 
-function openNotice(m, opener) {
+async function openNotice(m, opener) {
   const item = m.item ?? {}
   const c = store.channel(m.channelId)
+  let detail = null
+  if (item.real && item.noticeId) {
+    try { detail = await apiClient.notice(item.noticeId) } catch (error) { toast(apiErrorText(error)); return }
+  }
   const box = dialog(`<h3>${escapeHtml(item.title)}</h3>
 <p>${escapeHtml(c.emoji)} ${escapeHtml(c.title)} · ${escapeHtml(c.site)}</p>
 <div class="card-meta" style="margin-bottom:12px">${item.eventAt ? `<div>${icon('clock', 15)}<span>${escapeHtml(eventPhrase(item.eventAt))}${item.eventEnd ? ` – ${clock(item.eventEnd)}` : ''}</span></div>` : ''}${item.where ? `<div>${icon('pin', 15)}<span>${escapeHtml(item.where)}</span></div>` : ''}</div>
 <p class="note">${escapeHtml(item.summary ?? '')}</p>
+${NOTICE_CATEGORIES[item.category] ? `<p>分类：${escapeHtml(NOTICE_CATEGORIES[item.category])}</p>` : ''}
+${!item.eventAt && item.eventLabel ? `<p>活动日期：${escapeHtml(item.eventLabel)}</p>` : ''}
+${item.deadlineAt ? `<p>截止日期／时间：${escapeHtml(item.deadlineAt.replace('T', ' '))}</p>` : ''}
+${item.audience?.length ? `<p>适用对象：${escapeHtml(item.audience.join('、'))}</p>` : ''}
+${item.todos?.length ? `<div class="note">${item.todos.map(todo => `<div>• ${escapeHtml(todo.text)}${todo.dueAt ? `（${escapeHtml(todo.dueAt)}）` : ''}</div>`).join('')}</div>` : ''}
+${item.notes?.length ? `<p class="muted">${escapeHtml(item.notes.join('；'))}</p>` : ''}
+${detail ? `<details class="notice-body"><summary>网页正文</summary><div>${escapeHtml(detail.content || '本机暂时没有正文，可以打开原网页查看。').replace(/\n/g, '<br>')}</div></details>` : ''}
+${detail?.attachments?.length ? `<div class="note">附件：${detail.attachments.map(attachment => `<a href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener">${escapeHtml(attachment.name || '附件')}</a>`).join('、')}</div>` : ''}
 <div class="btns">${item.url ? `<a class="btn primary" href="${escapeHtml(item.url)}" target="_blank" rel="noopener" style="display:inline-grid;place-items:center;text-decoration:none">打开原网页</a>` : '<span class="muted" style="margin-right:auto;align-self:center">示例来源，没有原网页</span>'}<button class="btn" data-x="close">好的</button></div>`, { opener })
   box.querySelector('[data-x="close"]').addEventListener('click', closeOverlay)
+  if (item.real) {
+    box.classList.add('notice-dialog')
+    const retry = document.createElement('button')
+    retry.className = 'btn'
+    retry.textContent = '重新整理'
+    box.querySelector('.btns').prepend(retry)
+    retry.addEventListener('click', async () => {
+      try { await apiClient.process(item.noticeId); toast('已加入整理队列') }
+      catch (error) { toast(apiErrorText(error)) }
+    })
+  }
 }
 
 function openNoticeReminder(m, anchor) {
   if (overlayFor(anchor)) return closeOverlay()
   const item = m.item ?? {}
-  const existing = store.state.reminders.find(r => r.noticeId === m.id && r.status === 'pending')
-  const options = [[15, '开始前 15 分钟'], [30, '开始前 30 分钟'], [60, '开始前 1 小时'], [24 * 60, '提前一天']]
-    .map(([min, label]) => [item.eventAt - min * 60_000, label]).filter(([at]) => at > Date.now())
+  const existing = store.state.reminders.find(r => (r.noticeId === m.id || r.noticeId === item.noticeId) && r.status === 'pending')
+  const reference = item.eventAt || (typeof item.deadlineAt === 'string' && item.deadlineAt.includes('T') ? Date.parse(item.deadlineAt) : null)
+  const before = item.eventAt ? '开始前' : '截止前'
+  const options = [[15, `${before} 15 分钟`], [30, `${before} 30 分钟`], [60, `${before} 1 小时`], [24 * 60, '提前一天']]
+    .map(([min, label]) => [reference - min * 60_000, label]).filter(([at]) => at > Date.now())
   const pop = popover(anchor, `<div class="pop-title">什么时候叫你？</div>
-${options.map(([at, label]) => `<button class="mi" data-at="${at}">${icon('bell', 16)}${label}<span class="hint">${escapeHtml(whenLabel(at))}</span></button>`).join('') || '<div class="muted" style="padding:8px 10px">马上就开始啦</div>'}
+${options.map(([at, label]) => `<button class="mi" data-at="${at}">${icon('bell', 16)}${label}<span class="hint">${escapeHtml(whenLabel(at))}</span></button>`).join('')}
+<button class="mi" data-at="custom">${icon('clock', 16)}自定义提醒时间</button>
 ${existing ? `<div class="pop-sep"></div><button class="mi danger" data-at="cancel">${icon('close', 16)}取消提醒</button>` : ''}`, { place: 'below' })
-  pop.addEventListener('click', e => {
+  pop.addEventListener('click', async e => {
     const b = e.target.closest('[data-at]')
     if (!b) return
     closeOverlay()
+    if (b.dataset.at === 'custom') return openNewReminder(anchor, {
+      title: `「${item.title.slice(0, 35)}」`, channelId: m.channelId, noticeId: item.noticeId || m.id,
+    })
     if (b.dataset.at === 'cancel') {
-      store.remindersChanged(updateReminder(store.state, existing.id, { status: 'cancelled' }))
+      try { const result = await apiClient.updateReminder(existing.id, { status: 'cancelled' }); store.syncReminders([result.reminder]) } catch (error) { return toast(apiErrorText(error)) }
       return toast('提醒已取消')
     }
     try {
-      const r = addReminder(store.state, { title: `「${item.title}」`, dueAt: Number(b.dataset.at), channelId: m.channelId, noticeId: m.id })
-      store.remindersChanged(r)
+      const { reminder: r } = await apiClient.createReminder({ title: `「${item.title.slice(0, 75)}」`, dueAt: Number(b.dataset.at), channelId: m.channelId, noticeId: item.noticeId || m.id })
+      store.syncReminders([r])
       run(m.channelId, (async function* () { yield { type: 'typing', ms: 600 }; yield { type: 'message', text: `好嘞～${whenLabel(r.dueAt)} 叫你 ⏰`, quoteId: m.id } })())
-    } catch (err) { toast(err.message) }
+    } catch (err) { toast(apiErrorText(err)) }
   })
 }
 
@@ -264,8 +318,8 @@ ${markHTML({ look: p.look, image: p.look === 'image' ? p.image : null, size: 88,
 <div class="ch-icon" style="--tint:${escapeHtml(c.tint)};width:64px;height:64px;border-radius:20px;font-size:32px;margin:4px auto 10px">${escapeHtml(c.emoji)}</div>
 <h3>${escapeHtml(c.title)}</h3><p>${escapeHtml(p.botName)}帮你盯着这个来源</p>
 <dl class="kv"><dt>来源</dt><dd>${escapeHtml(c.site || '—')}</dd><dt>检查</dt><dd>${escapeHtml(c.every)}</dd><dt>通知</dt><dd>${c.notify === 'mute' ? '静音' : '有新消息就叫我'}</dd></dl>
-${c.sourceId ? '<dl class="kv"><dt>采集状态</dt><dd data-source-state></dd><dt>本机通知</dt><dd data-source-count></dd><dt>最近检查</dt><dd data-source-checked></dd></dl>' : ''}
-<div class="pills">${c.requiresAuth ? `<button class="pill" data-identity>${icon('key', 15)}<span data-auth-label>去认证</span></button>` : ''}<button class="pill" data-mute>${icon('bell', 15)}${c.notify === 'mute' ? '取消静音' : '静音'}</button></div>
+${c.sourceId ? '<dl class="kv"><dt>采集状态</dt><dd data-source-state></dd><dt>本机通知</dt><dd data-source-count></dd><dt>最近检查</dt><dd data-source-checked></dd><dt>通知整理</dt><dd data-ai-state></dd></dl>' : ''}
+<div class="pills">${c.requiresAuth ? `<button class="pill" data-identity>${icon('key', 15)}<span data-auth-label>去认证</span></button>` : ''}${c.sourceId ? `<button class="pill" data-api-settings>${icon('settings', 15)}API 设置</button>` : ''}<button class="pill" data-mute>${icon('bell', 15)}${c.notify === 'mute' ? '取消静音' : '静音'}</button></div>
 </div>`, { onClose: () => { stopped = true; clearTimeout(timer) } })
     if (c.sourceId) {
       const drawSource = () => {
@@ -277,6 +331,8 @@ ${c.sourceId ? '<dl class="kv"><dt>采集状态</dt><dd data-source-state></dd><
         pop.querySelector('[data-source-count]').textContent = count === null ? '—' : `${count} 条${complete === null ? '' : ` · ${complete} 篇正文`}`
         const checked = new Date(source?.lastCheckedAt)
         pop.querySelector('[data-source-checked]').textContent = source?.lastCheckedAt && Number.isFinite(checked.getTime()) ? checked.toLocaleString('zh-CN', { hour12: false }) : '—'
+        pop.querySelector('[data-ai-state]').textContent = !aiStatus?.configured ? '等待配置 API' : aiStatus.error
+          ? apiErrorText({ code: aiStatus.error }) : aiStatus.counts?.processing ? '正在整理通知' : aiStatus.automatic ? '自动整理已开启' : '仅手动整理'
         const label = pop.querySelector('[data-auth-label]')
         if (label) label.textContent = !source || ['auth_required', 'auth_expired'].includes(source.state) ? '去认证' : '身份认证'
       }
@@ -286,6 +342,7 @@ ${c.sourceId ? '<dl class="kv"><dt>采集状态</dt><dd data-source-state></dd><
     }
     pop.addEventListener('click', e => {
       if (e.target.closest('[data-identity]')) return openIdentityAuth(anchor)
+      if (e.target.closest('[data-api-settings]')) return openApiSettings(anchor)
       if (!e.target.closest('[data-mute]')) return
       store.setChannel(c.id, { notify: c.notify === 'mute' ? 'all' : 'mute' })
       closeOverlay()
@@ -303,6 +360,7 @@ function openMeMenu(anchor) {
 <button class="mi" data-go="bot">${icon('sparkle', 16)}形象与称呼</button>
 <button class="mi" data-go="notify">${icon('rss', 16)}主动消息</button>
 <button class="mi" data-go="auth">${icon('key', 16)}身份认证</button>
+<button class="mi" data-go="api">${icon('settings', 16)}API 设置</button>
 <button class="mi" data-go="look">${icon('image', 16)}外观</button>
 <div class="pop-sep"></div>
 <button class="mi" data-go="about">${icon('settings', 16)}关于与重置</button>`, { place: 'above' })
@@ -322,17 +380,17 @@ function openPlusMenu(anchor) {
   })
 }
 
-function openNewReminder(opener) {
+function openNewReminder(opener, { title = '', channelId = 'bot', noticeId } = {}) {
   const soon = [['10 分钟后', 10], ['1 小时后', 60], ['今晚 21:00', 'tonight'], ['明早 08:00', 'morning']]
   const box = dialog(`<h3>设一个提醒</h3><p>到点了${escapeHtml(store.state.profile.botName)}会来叫你。</p>
-<div class="field"><input class="input" data-f="title" placeholder="要做什么？" maxlength="40"></div>
+<div class="field"><input class="input" data-f="title" placeholder="要做什么？" maxlength="40" value="${escapeHtml(title)}"></div>
 <div class="chips">${soon.map(([l, v]) => `<button class="pill" data-soon="${v}">${l}</button>`).join('')}</div>
 <div class="field"><input class="input" type="datetime-local" data-f="at"></div>
 <div class="btns"><button class="btn" data-x="cancel">取消</button><button class="btn primary" data-x="ok">好</button></div>`, { opener })
   const at = box.querySelector('[data-f="at"]')
   const setAt = t => { const d = new Date(t); const pad = n => String(n).padStart(2, '0'); at.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}` }
   setAt(Date.now() + 60 * 60_000)
-  box.addEventListener('click', e => {
+  box.addEventListener('click', async e => {
     const b = e.target.closest('button')
     if (!b) return
     if (b.dataset.soon) {
@@ -347,12 +405,13 @@ function openNewReminder(opener) {
     if (b.dataset.x === 'ok') {
       try {
         const title = box.querySelector('[data-f="title"]').value
-        const r = addReminder(store.state, { title, dueAt: new Date(at.value).getTime(), channelId: 'bot' })
-        store.remindersChanged(r)
+        b.disabled = true
+        const { reminder: r } = await apiClient.createReminder({ title, dueAt: new Date(at.value).getTime(), channelId, ...(noticeId ? { noticeId } : {}) })
+        store.syncReminders([r])
         closeOverlay()
-        if (active !== 'bot') select('bot')
-        run('bot', (async function* () { yield { type: 'typing', ms: 600 }; yield { type: 'message', text: `记下啦～${whenLabel(r.dueAt)} 叫你${r.title} ⏰` } })())
-      } catch (err) { toast(err.message) }
+        if (active !== channelId) select(channelId)
+        run(channelId, (async function* () { yield { type: 'typing', ms: 600 }; yield { type: 'message', text: `记下啦～${whenLabel(r.dueAt)} 叫你${r.title} ⏰` } })())
+      } catch (err) { b.disabled = false; toast(apiErrorText(err)) }
     }
   })
 }
@@ -405,28 +464,42 @@ function openSearch(anchor) {
 const settingsApi = {
   store,
   openIdentityAuth,
-  reminder(id, patch) { store.remindersChanged(updateReminder(store.state, id, patch)) },
-  demoReminder() {
-    const r = addReminder(store.state, { title: '完成数学作业', dueAt: Date.now() + 5000, channelId: 'bot' })
-    store.remindersChanged(r)
+  openApiSettings,
+  async reminder(id, patch) {
+    const { reminder } = await apiClient.updateReminder(id, patch)
+    store.syncReminders([reminder])
+  },
+  async demoReminder() {
+    const { reminder } = await apiClient.createReminder({ title: '完成数学作业', dueAt: Date.now() + 5000, channelId: 'bot' })
+    store.syncReminders([reminder])
   },
   reset: () => store.reset(),
 }
 
 // ------------------------------------------------------------- reminders
-function deliver(r) {
-  if (!markDelivered(store.state, r.id)) return
-  store.remindersChanged(r)
-  const notice = r.noticeId && store.message(r.noticeId)
-  let text
-  if (notice?.item?.eventAt) {
-    const mins = Math.max(0, Math.round((notice.item.eventAt - Date.now()) / 60_000))
-    text = `⏰ {nickname}，${r.title}${mins > 0 ? `还有 ${mins >= 60 ? `${Math.round(mins / 60)} 小时` : `${mins} 分钟`}开始` : '开始啦'}！\n${notice.item.where ? `在${notice.item.where}，` : ''}不要忘记哦～`
-  } else {
-    text = r.title === ALARM ? `{nickname}，${clock(r.dueAt)} 啦 ⏰\n你定的闹钟到点咯～` : `{nickname}，${clock(r.dueAt)} 啦 ⏰\n该${r.title}了～`
-  }
-  const m = store.addMessage(r.channelId, { role: 'bot', kind: 'reminder', text, reminderId: r.id }, { unread: r.channelId !== active })
-  announce(r.channelId, store.state.profile.botName, plain(m.text, store.state.profile))
+let runtimePolling = false
+let runtimeInitialized = false
+async function refreshRuntime() {
+  if (runtimePolling) return
+  runtimePolling = true
+  try {
+    if (!runtimeInitialized) {
+      const legacy = store.state.reminders.filter(reminder => !reminder.id.startsWith('rem-ddl-') && !reminder.id.startsWith('rem-chat-'))
+      for (let index = 0; index < legacy.length; index += 200) await apiClient.importReminders(legacy.slice(index, index + 200))
+      runtimeInitialized = true
+    }
+    const [reminders, events] = await Promise.all([apiClient.reminders(), apiClient.events(store.state.eventCursor)])
+    store.syncReminders(reminders.reminders || [])
+    for (const event of events.events || []) {
+      if (store.message(event.id)) continue
+      const channelId = store.channel(event.channelId) ? event.channelId : 'bot'
+      const message = store.addMessage(channelId, { id: event.id, role: 'bot', kind: 'reminder', text: event.text,
+        at: event.at, reminderId: event.reminderId }, { unread: channelId !== active })
+      if (Date.now() - event.at < 60_000) announce(channelId, store.state.profile.botName, plain(message.text, store.state.profile))
+    }
+    if (Number.isSafeInteger(events.cursor) && events.cursor >= 0) store.setEventCursor(events.cursor)
+  } catch { /* Preserve local records and retry when the local service returns. */ }
+  finally { runtimePolling = false }
 }
 
 // ------------------------------------------------------------------- boot
@@ -442,13 +515,15 @@ startFeed({
   seen: { has: id => store.state.seenItems.includes(id), add: id => { store.state.seenItems.push(id); store.save() } },
   onItem(channelId, item) {
     if (!store.channel(channelId)) return
-    const live = Date.now() - item.publishedAt < 60_000
-    store.addMessage(channelId, { role: 'bot', kind: 'notice', text: noticeCopy(item), item, at: item.publishedAt }, { unread: channelId !== active })
-    if (live) announce(channelId, store.channel(channelId).title, plain(noticeCopy(item), store.state.profile))
+    const live = Number.isFinite(item.receivedAt) && Date.now() - item.receivedAt < 60_000
+    const { created, revised } = store.upsertNotice(channelId, { role: 'bot', kind: 'notice', text: noticeCopy(item), item, at: item.publishedAt }, { unread: channelId !== active })
+    if (live && (created || revised)) announce(channelId, store.channel(channelId).title, plain(noticeCopy(item), store.state.profile))
   },
 })
 
-startScheduler({ due: now => dueReminders(store.state, now), deliver, intervalMs: 1000 })
+refreshRuntime()
+setInterval(refreshRuntime, 2000)
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshRuntime() })
 
 // First visit: the bot says hello and asks what to call you.
 if (!store.state.messages.bot.length) {

@@ -1,4 +1,4 @@
-"""Serve the UI, local authentication API and five-minute crawler."""
+"""Serve the UI, authentication, crawler, DeepSeek chat and reminders."""
 
 from local_service import main
 

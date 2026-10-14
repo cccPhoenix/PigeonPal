@@ -1,6 +1,6 @@
 # 本地爬虫
 
-使用 Python 3.10+，通知数据存为 JSON，不调用 LLM。统一服务连接前端、ZJUAM 认证和两站爬虫；独立公开采集命令仍只依赖标准库。
+使用 Python 3.10+，通知数据存为 JSON。采集器自身不调用 LLM；统一服务在独立线程通过 DeepSeek 整理已采集正文，并接入真实来源频道。独立公开采集命令仍只依赖标准库，模型配置和提醒见 [AI 说明](ai.md)。
 
 认证、站点 SSO 和正文采集统一使用直连，不自动继承系统或环境变量中的 HTTP/HTTPS 代理。这样避免认证成功、采集却走另一条代理线路而超时。
 
@@ -81,6 +81,6 @@ ITC 需要 ZJUAM 认证。统一服务通过 `scripts/local_auth/` 实现直接 
 
 此前已在用户本机通过临时认证确认 ITC 列表和正文可访问，临时会话已结束。2026-10-14 用户在本机 UI 完成认证，正常服务完成上述真实采集；本轮按用户要求未运行自动测试。账号、密码、Cookie 和带票据的认证 URL 不写入通知数据或日志。
 
-认证接口仍在 `scripts/crawlers/auth.py`：`session_for(source_id)` 返回包含内存 `CookieJar` 的 `AuthSession` 或 `None`，`invalidate(source_id)` 丢弃该来源的过期会话。统一服务提供站点会话，独立 CLI 使用 `NoAuthProvider`。爬虫自身不接收账号密码。新增受保护来源需接入自己的 SSO 会话和解析规则，复用独立的校园账号绑定。ITC 的 SSO 建立流程先尝试 Cookie 复用；若官方 CAS 要求该站的表单，再由认证管理器提供一次加密提交，不因该站登录失败清空校园身份。来源卡展示真实采集状态，但聊天和频道消息仍是演示内容，通知正文尚未接入消息流或 LLM。
+认证接口仍在 `scripts/crawlers/auth.py`：`session_for(source_id)` 返回包含内存 `CookieJar` 的 `AuthSession` 或 `None`，`invalidate(source_id)` 丢弃该来源的过期会话。统一服务提供站点会话，独立 CLI 使用 `NoAuthProvider`。爬虫自身不接收账号密码。新增受保护来源需接入自己的 SSO 会话和解析规则，复用独立的校园账号绑定。ITC 的 SSO 建立流程先尝试 Cookie 复用；若官方 CAS 要求该站的表单，再由认证管理器提供一次加密提交，不因该站登录失败清空校园身份。真实通知和整理结果通过本机 API 进入频道；模型处理只读取通知数据白名单，不读取认证会话。
 
 旧的 `scripts/crawl_yunfeng.py` 是首次试抓工具，每次读取首页与最新三篇正文并输出 `data/yunfeng-notices.json`。持续采集请使用上述新入口。

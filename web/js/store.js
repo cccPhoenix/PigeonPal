@@ -3,7 +3,7 @@
 
 import { newId } from './reminders.js'
 import { hasLook } from './mark/looks.js'
-import { DEMO_CHANNELS, LOCAL_CHANNELS } from './services/sources.js'
+import { LOCAL_CHANNELS } from './services/sources.js'
 
 export const STORAGE_KEY = 'pigeonpal.v1'
 const KINDS = ['text', 'notice', 'reminder']
@@ -22,11 +22,12 @@ export function createInitialState() {
       quietStart: '23:00',
       quietEnd: '07:30',
     },
-    channels: [{ id: 'bot', kind: 'bot' }, ...[...LOCAL_CHANNELS, ...DEMO_CHANNELS].map(c => ({ kind: 'source', notify: 'all', ...c }))],
-    messages: Object.fromEntries(['bot', ...LOCAL_CHANNELS.map(c => c.id), ...DEMO_CHANNELS.map(c => c.id)].map(id => [id, []])),
+    channels: [{ id: 'bot', kind: 'bot' }, ...LOCAL_CHANNELS.map(c => ({ kind: 'source', notify: 'all', ...c }))],
+    messages: Object.fromEntries(['bot', ...LOCAL_CHANNELS.map(c => c.id)].map(id => [id, []])),
     reminders: [],
     unread: {},
     seenItems: [],
+    eventCursor: 0,
   }
 }
 
@@ -72,15 +73,20 @@ export function hydrate(raw) {
   }
   if (Array.isArray(stored.reminders)) {
     fresh.reminders = stored.reminders.filter(r => r && typeof r.id === 'string' && typeof r.title === 'string' && Number.isFinite(r.dueAt) && ['pending', 'done', 'cancelled'].includes(r.status))
-      .map(r => ({ id: r.id, title: r.title.slice(0, 80), dueAt: r.dueAt, status: r.status, channelId: fresh.messages[r.channelId] ? r.channelId : 'bot', noticeId: typeof r.noticeId === 'string' ? r.noticeId : null, deliveredAt: Number.isFinite(r.deliveredAt) ? r.deliveredAt : null, createdAt: Number.isFinite(r.createdAt) ? r.createdAt : 0 }))
+      .map(r => ({ id: r.id, title: r.title.slice(0, 80), dueAt: r.dueAt, status: r.status, channelId: fresh.messages[r.channelId] ? r.channelId : 'bot', noticeId: typeof r.noticeId === 'string' ? r.noticeId : null, deliveredAt: Number.isFinite(r.deliveredAt) ? r.deliveredAt : null, createdAt: Number.isFinite(r.createdAt) ? r.createdAt : 0, updatedAt: Number.isFinite(r.updatedAt) ? r.updatedAt : 0 }))
   }
   if (Array.isArray(stored.seenItems)) fresh.seenItems = stored.seenItems.filter(id => typeof id === 'string').slice(-500)
+  if (Number.isSafeInteger(stored.eventCursor) && stored.eventCursor >= 0) fresh.eventCursor = stored.eventCursor
   return fresh
 }
 
 function cleanItem(item) {
   const out = {}
-  for (const key of ['id', 'kind', 'title', 'where', 'summary', 'url']) if (typeof item[key] === 'string') out[key] = item[key].slice(0, 600)
+  for (const key of ['id', 'noticeId', 'sourceId', 'revision', 'kind', 'category', 'title', 'where', 'summary', 'url', 'deadlineAt', 'eventLabel', 'analysisState', 'publishedDate']) if (typeof item[key] === 'string') out[key] = item[key].slice(0, 1000)
+  if (item.real === true) out.real = true
+  if (Number.isSafeInteger(item.contentVersion)) out.contentVersion = item.contentVersion
+  for (const key of ['audience', 'notes']) if (Array.isArray(item[key])) out[key] = item[key].filter(value => typeof value === 'string').slice(0, 20).map(value => value.slice(0, 300))
+  if (Array.isArray(item.todos)) out.todos = item.todos.filter(row => typeof row?.text === 'string').slice(0, 20).map(row => ({ text: row.text.slice(0, 300), dueAt: typeof row.dueAt === 'string' ? row.dueAt.slice(0, 40) : null }))
   for (const key of ['eventAt', 'eventEnd', 'publishedAt']) if (Number.isFinite(item[key])) out[key] = item[key]
   if (out.url && !/^https?:\/\//.test(out.url)) delete out.url
   return out
@@ -118,6 +124,28 @@ export function createStore(storage = globalThis.localStorage) {
       emit('message', message)
       return message
     },
+    upsertNotice(channelId, fields, { unread = false } = {}) {
+      const existing = state.messages[channelId].find(message => message.kind === 'notice' && message.item?.noticeId === fields.item.noticeId)
+      if (!existing) return { message: this.addMessage(channelId, fields, { unread }), created: true }
+      const revised = existing.item.contentVersion !== fields.item.contentVersion
+      if (unread && existing.item.revision !== fields.item.revision) state.unread[channelId] = (state.unread[channelId] ?? 0) + 1
+      Object.assign(existing, fields)
+      save()
+      emit('message-updated', existing)
+      return { message: existing, created: false, revised }
+    },
+    syncReminders(rows) {
+      for (const row of rows) {
+        if (!row || typeof row.id !== 'string' || !Number.isFinite(row.dueAt)) continue
+        const existing = state.reminders.find(reminder => reminder.id === row.id)
+        if (existing && (existing.updatedAt || 0) > (row.updatedAt || 0)) continue
+        if (existing) Object.assign(existing, row)
+        else state.reminders.push({ ...row })
+        emit('reminders', row)
+      }
+      save()
+    },
+    setEventCursor(cursor) { state.eventCursor = cursor; save() },
     markRead(channelId) {
       if (!state.unread[channelId]) return
       delete state.unread[channelId]
