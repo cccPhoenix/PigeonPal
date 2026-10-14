@@ -448,10 +448,11 @@ def _confirm_sso(client, baseline):
     page = _Page(html)
     _check_page(page)
     if (not client.login_cookie_sent
-            or not (_login_cookies(client.jar, client.wall_time()) - baseline)):
+            or not (_login_cookies(client.jar, client.wall_time()) - baseline)
+            or not page.authenticated_success()):
         raise AuthError("invalid_cas_page", reason="sso_not_confirmed")
-    # A retained new TGC sent back to CAS and an authenticated/non-login page
-    # form the evidence. A generic HTTP 200 or the cookie alone never suffices.
+    # A retained new TGC sent back to CAS and an explicit success page form
+    # the evidence. A generic HTTP 200 or the cookie alone never suffices.
 
 
 def login_zjuam(username: str, password: str, cancel: threading.Event,
@@ -503,9 +504,9 @@ def login_zjuam(username: str, password: str, cancel: threading.Event,
         page = None if redirected else _Page(html)
         if page is not None:
             _check_page(page)
+        if not (_login_cookies(client.jar, client.wall_time()) - baseline):
+            raise AuthError("invalid_cas_page", reason="sso_cookie_missing")
         if page is None or not page.authenticated_success():
-            if not (_login_cookies(client.jar, client.wall_time()) - baseline):
-                raise AuthError("invalid_cas_page", reason="sso_cookie_missing")
             _confirm_sso(client, baseline)
         client.check_cancel()
         session_jar = http.cookiejar.CookieJar(_HostCookiePolicy())

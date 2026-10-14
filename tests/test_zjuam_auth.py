@@ -119,7 +119,7 @@ class ZjuamAuthTests(unittest.TestCase):
         fields = parse_qs(calls[-1]["data"].decode(), keep_blank_values=True)
         self.assertEqual(fields["username"], ["fixture-user"])
         self.assertEqual(fields["execution"], ["fake-execution"])
-        self.assertEqual(fields["ys"], ["fixture-protocol-value"])
+        self.assertNotIn("ys", fields)
         self.assertNotEqual(fields["password"], ["fixture-password"])
         self.assertEqual(fields["authcode"], [""])
         self.assertNotIn("service", fields)
@@ -199,7 +199,7 @@ class ZjuamAuthTests(unittest.TestCase):
         self.error(initial() + [Response(body=FORM + '<p>用户名或密码错误 fake-sensitive-identifier</p>')], "invalid_credentials")
 
     def test_illegal_form_actions_hidden_service_and_get_method_never_submit(self):
-        forms = [FORM.replace('/cas/login" method', action + '" method') for action in ("https://evil.example/steal", "http://zjuam.zju.edu.cn/cas/login", "/cas/other", "https://itc.zju.edu.cn/cas/login", "/cas/login?service=https%3A%2F%2Fitc.zju.edu.cn")]
+        forms = [FORM.replace('/cas/login" method', action + '" method') for action in ("https://evil.example/steal", "http://zjuam.zju.edu.cn:8080/cas/login", "/cas/other", "https://itc.zju.edu.cn/cas/login", "/cas/login?service=https%3A%2F%2Fitc.zju.edu.cn")]
         forms += [FORM.replace('</form>', '<input type="hidden" name="service" value="anything"></form>'), FORM.replace('method="post"', 'method="get"')]
         for form in forms:
             with self.subTest(form=form):
@@ -210,6 +210,13 @@ class ZjuamAuthTests(unittest.TestCase):
         client, _, _, cancel = self.client(initial() + [Response(302, Location="/cas/login", Set_Cookie=LOGIN_COOKIE), Response(body=SUCCESS)])
         self.login(client, cancel)
         self.assertEqual([call["method"] for call in client.opener.calls], ["GET", "GET", "POST", "GET"])
+
+    def test_same_cas_http_form_action_is_upgraded_before_post(self):
+        form = FORM.replace('action="/cas/login"', 'action="http://zjuam.zju.edu.cn/cas/login"')
+        client, _, _, cancel = self.client(initial(form) + [Response(body=SUCCESS, Set_Cookie=LOGIN_COOKIE)])
+        self.login(client, cancel)
+        self.assertEqual(client.opener.calls[-1]["url"], LOGIN_URL)
+        self.assertEqual(client.opener.calls[-1]["method"], "POST")
 
     def test_same_cas_http_redirect_is_upgraded_before_any_request(self):
         for destination in ("http://zjuam.zju.edu.cn/cas/login", "http://zjuam.zju.edu.cn:80/cas/login?service="):
@@ -241,9 +248,12 @@ class ZjuamAuthTests(unittest.TestCase):
         ], "login_rejected")
         self.assertEqual(client.opener.calls[-1]["url"], LOGIN_URL)
         for status in (307, 308):
-            error, client = self.error(initial() + [Response(status, Location=LOGIN_URL, Set_Cookie=LOGIN_COOKIE)], "unexpected_destination")
-            self.assertEqual(error.reason, "post_replay")
-            self.assertEqual(len(client.opener.calls), 3)
+            with self.subTest(status=status):
+                _, client = self.error(initial() + [
+                    Response(status, Location=LOGIN_URL, Set_Cookie=LOGIN_COOKIE),
+                    Response(body=FORM),
+                ], "login_rejected")
+                self.assertEqual([call["method"] for call in client.opener.calls], ["GET", "GET", "POST", "GET"])
 
     def test_redirect_failures_expose_only_fixed_reason_codes(self):
         error, client = self.error(initial() + [Response(302, Location="https://evil.example/?ticket=fixture-sensitive-ticket")], "unexpected_destination")
@@ -260,10 +270,15 @@ class ZjuamAuthTests(unittest.TestCase):
                 _CASClient.redirect_url(destination)
             self.assertEqual(raised.exception.reason, reason)
 
-    def test_post_replay_other_hosts_and_service_redirects_are_rejected(self):
+    def test_redirects_never_replay_post_and_other_hosts_and_services_are_rejected(self):
         for status in (307, 308):
-            _, client = self.error(initial() + [Response(status, Location=LOGIN_URL)], "unexpected_destination")
-            self.assertEqual(sum(call["method"] == "POST" for call in client.opener.calls), 1)
+            with self.subTest(status=status):
+                client, _, _, cancel = self.client(initial() + [
+                    Response(status, Location=LOGIN_URL, Set_Cookie=LOGIN_COOKIE),
+                    Response(body=SUCCESS),
+                ])
+                self.login(client, cancel)
+                self.assertEqual([call["method"] for call in client.opener.calls], ["GET", "GET", "POST", "GET"])
         for destination in ("https://evil.example/?ticket=fixture-ticket", "https://itc.zju.edu.cn/90618/list.psp", LOGIN_URL + "?service=https%3A%2F%2Fitc.zju.edu.cn"):
             self.error(initial() + [Response(302, Location=destination)], "unexpected_destination")
 
@@ -278,7 +293,6 @@ class ZjuamAuthTests(unittest.TestCase):
         for response in (
             Response(body="<html>欢迎</html>", Set_Cookie=LOGIN_COOKIE),
             Response(body=SUCCESS),
-            Response(body=SUCCESS, Set_Cookie="CASTGC=fixture-cookie; Path=/cas"),
             Response(body=SUCCESS, Set_Cookie="SESSION=fixture-cookie; Path=/cas; Secure"),
             Response(body='<h1>登录成功指南</h1>', Set_Cookie=LOGIN_COOKIE),
             Response(body='<script>登录成功</script>', Set_Cookie=LOGIN_COOKIE),
@@ -287,6 +301,30 @@ class ZjuamAuthTests(unittest.TestCase):
         self.error(initial() + [Response(body=SUCCESS + FORM, Set_Cookie=LOGIN_COOKIE)], "login_rejected")
         self.error(initial() + [Response(body=SUCCESS + '<form><input name="username"><input name="password"></form>', Set_Cookie=LOGIN_COOKIE)], "login_rejected")
         self.error(initial() + [Response(body=SUCCESS + '<p>用户名或密码错误</p>', Set_Cookie=LOGIN_COOKIE)], "invalid_credentials")
+
+    def test_confirmation_rejects_generic_page_even_with_new_sso_cookie(self):
+        error, client = self.error(initial() + [
+            Response(body="<p>Please try later</p>", Set_Cookie=LOGIN_COOKIE),
+            Response(body="<p>Please try later</p>"),
+        ], "invalid_cas_page")
+        self.assertEqual(error.reason, "sso_not_confirmed")
+        self.assertEqual([call["method"] for call in client.opener.calls], ["GET", "GET", "POST", "GET"])
+
+    def test_confirmation_accepts_explicit_success_with_new_sso_cookie(self):
+        client, _, _, cancel = self.client(initial() + [
+            Response(body="<p>Continue</p>", Set_Cookie=LOGIN_COOKIE),
+            Response(body=SUCCESS),
+        ])
+        result = self.login(client, cancel)
+        self.assertTrue(any(cookie.name == "CASTGC" for cookie in result.session.cookies))
+
+    def test_sso_cookie_without_secure_attribute_is_used_only_over_https(self):
+        client, _, _, cancel = self.client(initial() + [
+            Response(body=SUCCESS, Set_Cookie="CASTGC=fixture-cookie; Path=/cas"),
+        ])
+        result = self.login(client, cancel)
+        self.assertTrue(any(cookie.name == "CASTGC" for cookie in result.session.cookies))
+        self.assertTrue(all(call["url"].startswith("https://") for call in client.opener.calls))
 
     def test_recognized_chinese_and_official_english_success_messages(self):
         for message in ('<h2>认证成功</h2>', '<p>您已成功登录。</p>', '<h2>Log In Successful</h2><p>You have successfully logged into the Central Authentication Service.</p>'):
