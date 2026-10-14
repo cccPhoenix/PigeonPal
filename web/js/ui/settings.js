@@ -36,7 +36,7 @@ export function openSettings(api, { page = 'bot', opener } = {}) {
 <div class="looks">${LOOK_IDS.map(id => `<button class="look" data-look="${id}" aria-pressed="${p().look === id}">${markHTML({ look: id, size: 56, live: true })}<span>${escapeHtml(LOOKS[id].label)}</span><small>${escapeHtml(LOOKS[id].note)}</small></button>`).join('')}
 <button class="look" data-look="image" aria-pressed="${p().look === 'image'}">${p().image ? markHTML({ image: p().image, size: 56, live: true }) : `<span class="mk" style="--mk-size:56px;display:grid;place-items:center;color:var(--ink-3)">${icon('image', 26)}</span>`}<span>上传图片</span><small>PNG / SVG / GIF</small></button>
 </div><input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" data-upload hidden>
-<span class="help">形象还在设计中。两只鸽子是草图，可以在 <a href="./lab.html" target="_blank">形象实验室</a> 看所有动作。</span></div>`,
+<span class="help">新增 10 款参考角色。可以在 <a href="./lab.html" target="_blank">形象实验室</a> 对比大小和动作；选择后会同步到聊天头像。</span></div>`,
 
     reminders: () => {
       const list = pendingReminders(store.state)

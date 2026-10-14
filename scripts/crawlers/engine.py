@@ -7,7 +7,7 @@ from datetime import datetime
 import time
 from typing import Callable
 
-from itc_html import AuthenticationRequired
+from itc_html import AuthenticationRequired, list_diagnostics as itc_list_diagnostics
 
 from .auth import AuthProvider, AuthSession, NoAuthProvider
 from .http import CrawlFailure, SlowClient
@@ -126,6 +126,8 @@ class CrawlEngine:
             except AuthenticationRequired:
                 raise CrawlFailure("auth_required") from None
             except ValueError:
+                if source.id == "itc":
+                    counts.update(itc_list_diagnostics(html))
                 raise CrawlFailure("list_parse_failed") from None
             synced = self.store.sync_list(source.id, items, self.clock())
             counts.update(listItems=len(items), new=synced["new"], metadataChanged=synced["changed"])

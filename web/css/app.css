@@ -28,7 +28,7 @@ input, textarea, select { font: inherit; color: inherit; }
 }
 .side-top { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 4px 0 8px; }
 .brand { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 600; letter-spacing: -.01em; margin-right: auto; }
-.brand .mk { --mk-size: 22px; }
+.brand-icon { display: block; width: 32px; height: 32px; flex: none; object-fit: contain; border-radius: 6px; }
 .icon-btn {
   width: 34px; height: 34px; border-radius: 50%;
   display: inline-grid; place-items: center;
