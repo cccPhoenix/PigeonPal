@@ -12,13 +12,14 @@ import re
 from urllib.parse import unquote, urlsplit, urlunsplit
 
 from yunfeng_html import (
-    _ATTACHMENT_SUFFIXES, _DATE_RE, _Node, _body_text, _class_nodes,
+    _ATTACHMENT_SUFFIXES, _Node, _body_text, _class_nodes,
     _compact, _http_url, _text, _tree, _walk,
 )
 
 
 _ARTICLE_RE = re.compile(r"/c\d+a(\d+)(?:/|$)")
 _GROUP_TAGS = {"ul", "ol", "tbody", "table"}
+_ITC_DATE_RE = re.compile(r"(?<!\d)(\d{4})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})(?:日)?(?!\d)")
 
 
 class AuthenticationRequired(ValueError):
@@ -26,7 +27,14 @@ class AuthenticationRequired(ValueError):
 
 
 def _calendar_date(text: str, *, required: bool) -> str:
-    matches = list(dict.fromkeys(_DATE_RE.findall(text)))
+    matches = []
+    for year, month, day in _ITC_DATE_RE.findall(text):
+        try:
+            value = date(int(year), int(month), int(day)).isoformat()
+        except ValueError:
+            raise ValueError("ITC publication date is invalid") from None
+        if value not in matches:
+            matches.append(value)
     if not matches and not required:
         return ""
     if len(matches) != 1:
@@ -83,10 +91,16 @@ def _parents(root: _Node) -> dict[int, _Node]:
 
 
 def _rows(container: _Node) -> list[_Node]:
+    def article_links(node):
+        return {child.attrs["href"] for child in _walk(node)
+                if child.tag == "a" and child.attrs.get("href")
+                and _ARTICLE_RE.search(urlsplit(child.attrs["href"]).path)}
+
     candidates = [
         node for node in _walk(container)
-        if (node.has_class("news") or node.tag in {"li", "tr"})
-        and _class_nodes(node, "news_title") and _class_nodes(node, "news_meta")
+        if node.has_class("news") or node.tag in {"li", "tr", "div"}
+        if (_class_nodes(node, "news_title") and _class_nodes(node, "news_meta"))
+        or (len(article_links(node)) == 1 and _ITC_DATE_RE.search(_text(node)))
     ]
     candidate_ids = {id(node) for node in candidates}
     return [
@@ -108,43 +122,42 @@ def _single_group(rows: list[_Node], container: _Node, parents: dict[int, _Node]
 
 def _list_container(root: _Node, parents: dict[int, _Node]) -> _Node:
     nodes = list(_walk(root))
-    explicit = [node for node in nodes if node.attrs.get("id") == "wp_news_w6"]
-    if len(explicit) > 1:
-        raise ValueError("ITC window 6 notice container is ambiguous")
-    if explicit:
+    # Window numbers belong to each site's template, not the article column.
+    # Prefer the list associated with a WebPlus pager over header/footer lists.
+    pagers = [node for node in nodes if re.fullmatch(r"wp_paging_w\d+", node.attrs.get("id", ""))]
+    candidates = {}
+    for pager in pagers:
+        current = parents.get(id(pager))
+        while current is not None and current.tag not in {"root", "html", "body"}:
+            rows = _rows(current)
+            if rows:
+                if _single_group(rows, current, parents):
+                    candidates[id(current)] = current
+                break
+            current = parents.get(id(current))
+    if len(candidates) == 1:
+        return next(iter(candidates.values()))
+    if len(candidates) > 1:
+        raise ValueError("ITC paginated notice list is ambiguous")
+    # Some short columns do not render a pager. Accept one explicit news
+    # window, but do not combine unrelated lists just to get non-empty output.
+    explicit = [node for node in nodes
+                if re.fullmatch(r"wp_news_w\d+", node.attrs.get("id", ""))
+                and _rows(node) and _single_group(_rows(node), node, parents)]
+    if len(explicit) == 1:
         return explicit[0]
-    windows = [
-        node for node in nodes
-        if node.attrs.get("frag", "").strip().lower() in {"窗口6", "window6"}
-        or node.attrs.get("id", "").lower() == "window6"
-    ]
-    if len(windows) > 1:
-        raise ValueError("ITC window 6 notice container is ambiguous")
-    if windows:
-        return windows[0]
-    pagers = [node for node in nodes if node.attrs.get("id") == "wp_paging_w6"]
-    if len(pagers) != 1:
-        raise ValueError("ITC window 6 notice container was not found")
-    current = parents.get(id(pagers[0]))
-    while current is not None:
-        rows = _rows(current)
-        if rows:
-            if current.tag in {"root", "html", "body"} or not _single_group(rows, current, parents):
-                raise ValueError("ITC window 6 notice container is ambiguous")
-            return current
-        current = parents.get(id(current))
-    raise ValueError("ITC window 6 notice rows were not found")
+    raise ValueError("ITC notice list container is missing or ambiguous")
 
 
 def parse_list(html: str, base_url: str) -> list[dict]:
-    """Return dated article rows from window 6, excluding other page lists."""
+    """Return dated article rows from the main list, excluding other widgets."""
     root = _tree(html)
     _reject_login(root)
     parents = _parents(root)
     container = _list_container(root, parents)
     rows = _rows(container)
     if rows and not _single_group(rows, container, parents):
-        raise ValueError("ITC window 6 notice rows are ambiguous")
+        raise ValueError("ITC notice rows are ambiguous")
     items = []
     seen = set()
     for row in rows:
@@ -152,6 +165,20 @@ def parse_list(html: str, base_url: str) -> list[dict]:
             node for title in _class_nodes(row, "news_title") for node in _walk(title)
             if node.tag == "a" and node.attrs.get("href")
         ]
+        if not anchors:
+            anchors = [node for node in _walk(row)
+                       if node.tag == "a" and node.attrs.get("href")
+                       and _notice_url(node.attrs["href"], base_url)
+                       and (_compact(node.attrs.get("title", "")) or _compact(_text(node)))]
+        # Templates can repeat a title link around an icon and the text.
+        unique = {}
+        for anchor in anchors:
+            key = _notice_url(anchor.attrs["href"], base_url)
+            if key is not None and (key not in unique or len(_text(anchor)) > len(_text(unique[key]))):
+                unique[key] = anchor
+        if anchors and not unique:
+            continue
+        anchors = list(unique.values())
         if len(anchors) != 1:
             raise ValueError("ITC notice title link is missing or ambiguous")
         anchor = anchors[0]
@@ -161,7 +188,8 @@ def parse_list(html: str, base_url: str) -> list[dict]:
         title = _compact(anchor.attrs.get("title", "")) or _compact(_text(anchor))
         if not title:
             raise ValueError("ITC notice title is empty")
-        published_at = _calendar_date(" ".join(_text(node) for node in _class_nodes(row, "news_meta")), required=True)
+        metas = _class_nodes(row, "news_meta")
+        published_at = _calendar_date(" ".join(_text(node) for node in metas) if metas else _text(row), required=False)
         item_id = _article_id(url)
         if item_id in seen:
             continue
@@ -170,6 +198,20 @@ def parse_list(html: str, base_url: str) -> list[dict]:
     if not items:
         raise ValueError("ITC notice list contained no valid same-host dated articles")
     return items
+
+
+def list_diagnostics(html: str) -> dict[str, int]:
+    """Only structural counts; no page text, identities, cookies or URLs."""
+    root = _tree(html)
+    nodes = list(_walk(root))
+    return {
+        "itcArticleLinks": sum(node.tag == "a" and bool(_ARTICLE_RE.search(
+            urlsplit(node.attrs.get("href", "")).path)) for node in nodes),
+        "itcDateCount": len(_ITC_DATE_RE.findall(_text(root))),
+        "itcStructuredRows": len(_rows(root)),
+        "itcPagerCount": sum(bool(re.fullmatch(r"wp_paging_w\d+", node.attrs.get("id", ""))) for node in nodes),
+        "itcNewsWindowCount": sum(bool(re.fullmatch(r"wp_news_w\d+", node.attrs.get("id", ""))) for node in nodes),
+    }
 
 
 def parse_article(html: str, base_url: str) -> dict:

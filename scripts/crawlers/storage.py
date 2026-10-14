@@ -92,7 +92,9 @@ def _key(source_id, notice_id):
 
 def _flags(row, extra=()):
     flags = {flag for flag in extra if isinstance(flag, str) and _CODE.fullmatch(flag)}
-    flags.difference_update({"pending_body", "body_failed", "has_attachments"})
+    flags.difference_update({"pending_body", "body_failed", "has_attachments", "publication_date_missing"})
+    if not row.get("publishedAt"):
+        flags.add("publication_date_missing")
     if row["state"] == "pending" or not row.get("content"):
         flags.add("pending_body")
     if row["state"] == "failed":
@@ -284,6 +286,7 @@ class NoticeStore:
                         "contentHash": None, "version": 0, "failureCount": 0,
                         "lastError": None, "isLatest": True,
                     }
+                    row["qualityFlags"] = _flags(row, row["qualityFlags"])
                     state["notices"][key] = row
                     new += 1
                 elif row["listHash"] != list_hash:

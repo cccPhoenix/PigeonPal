@@ -12,6 +12,7 @@ import uuid
 from crawlers.auth import AuthSession
 from .vault import CredentialVault, Credentials, VaultError
 from .zjuam import AuthError, LoginResult, REASON_CODES, login_zjuam
+from .cas_protocol import build_submission
 
 
 _DIAGNOSTIC_STAGES = frozenset({
@@ -322,6 +323,25 @@ class AuthManager:
         """Read the in-memory ZJUAM session without visiting another website."""
         with self.lock:
             return self._session if self._state == "authenticated" and not self._closed else None
+
+    def campus_submission(self, expected_session, execution, public_key_text):
+        """Build one RSA-encrypted service login without exposing vault credentials.
+
+        The site adapter validates the official CAS form URL before requesting
+        this body. An ITC-specific login form does not revoke campus identity.
+        """
+        credentials = None
+        with self.lock:
+            if expected_session is None or self.campus_session() is not expected_session:
+                return None
+            try:
+                credentials = self.vault.read()
+                if credentials is None:
+                    return None
+                return build_submission(credentials.username, credentials.password,
+                                        execution, public_key_text)
+            finally:
+                credentials = None
 
     def invalidate_campus(self, expected_session):
         """Renew only when ZJUAM itself reports this exact session expired."""

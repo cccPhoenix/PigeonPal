@@ -8,7 +8,7 @@ import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urljoin, urlsplit, urlunsplit
 from urllib.request import (
-    HTTPRedirectHandler, HTTPCookieProcessor, OpenerDirector, Request,
+    HTTPRedirectHandler, HTTPCookieProcessor, OpenerDirector, ProxyHandler, Request,
     build_opener,
 )
 
@@ -87,7 +87,10 @@ class SlowClient:
         self.choose_delay = choose_delay
         self.last_finished: float | None = None
         self.request_count = 0
-        handlers = [NoRedirect()]
+        # Match account validation and site SSO: use a direct campus connection.
+        # urllib's implicit ProxyHandler otherwise picks up desktop/env proxies,
+        # making collection take a different route from the successful login.
+        handlers = [ProxyHandler({}), NoRedirect()]
         if session is not None:
             handlers.append(HTTPCookieProcessor(session.cookies))
         self.opener = opener or build_opener(*handlers)

@@ -1,8 +1,9 @@
-"""GET-only site SSO bootstrap, independent of campus credential validation.
+"""Site SSO bootstrap, independent of campus credential validation.
 
-The caller supplies an already validated, in-memory campus session. No password
-or vault is read here; failures describe the selected source only. A login form
-served by the official CAS host is the sole evidence used to expire campus SSO.
+The caller supplies an already validated, in-memory campus session. If CAS
+requires the source's own login form, the manager supplies one encrypted form
+body. No plaintext password or vault is read here, and source failures do not
+revoke the campus identity. Redirects never replay that credential POST.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from urllib.request import (
 
 from crawlers.auth import AuthSession
 from crawlers.http import retry_after_seconds
+from .zjuam import AUTH_USER_AGENT, PUBLIC_KEY_URL, _Page, _is_login_path
 
 
 CAS_HOST = "zjuam.zju.edu.cn"
@@ -29,6 +31,7 @@ ERROR_CODES = {
     "auth_required", "cancelled", "network_error", "campus_network_required",
     "access_denied", "rate_limited", "invalid_sso_page",
     "unexpected_destination", "session_changed",
+    "challenge_required", "invalid_credentials", "login_rejected", "credential_unavailable",
 }
 
 
@@ -41,7 +44,8 @@ class SiteSessionError(RuntimeError):
 
 class _CampusManager(Protocol):
     def campus_session(self) -> AuthSession | None: ...
-    def invalidate_campus(self, expected_session: AuthSession) -> None: ...
+    def campus_submission(self, expected_session: AuthSession, execution: str,
+                          public_key_text: str) -> bytes | None: ...
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -112,8 +116,8 @@ class _LoginPage(HTMLParser):
 class SiteSessionProvider:
     """Own per-source cookies while using campus SSO only on the worker thread.
 
-    ``session_for`` is a pure lookup. ``prepare`` performs a bounded GET-only
-    browser-style redirect transaction, with no crawler pacing sleeps. The
+    ``session_for`` is a pure lookup. ``prepare`` performs a bounded browser-style
+    transaction, with at most one POST to official CAS and no crawler sleeps. The
     resulting timestamp lets the crawler pace its next ordinary page fetch.
     """
 
@@ -189,7 +193,9 @@ class SiteSessionProvider:
                 if parts.scheme != "https" or parts.port not in {None, 443}:
                     raise ValueError()
             elif parts.hostname == CAS_HOST:
-                if parts.scheme != "https" or parts.port not in {None, 443} or parts.path != "/cas/login":
+                if parts.scheme == "http" and parts.port in {None, 80}:
+                    parts = parts._replace(scheme="https", netloc=CAS_HOST)
+                if parts.scheme != "https" or parts.port not in {None, 443} or not _is_login_path(parts.path):
                     raise ValueError()
                 services = parse_qs(parts.query).get("service", [])
                 if len(services) != 1:
@@ -230,6 +236,9 @@ class SiteSessionProvider:
         deadline = self.clock() + 45.0
         last_finished = None
         html = None
+        payload = None
+        credential_posted = False
+        completed = False
 
         def check_current():
             if cancel.is_set():
@@ -246,16 +255,55 @@ class SiteSessionProvider:
         try:
             opener = self.opener_factory(jar)
             current = endpoint
+
+            def public_key():
+                # Only GET the fixed official key endpoint, never a key URL
+                # supplied in school HTML or a redirect. Keep the same jar.
+                check_current()
+                remaining = deadline - self.clock()
+                if remaining <= 0:
+                    raise SiteSessionError("network_error")
+                req = Request(PUBLIC_KEY_URL, headers={
+                    "User-Agent": AUTH_USER_AGENT, "Accept": "application/json",
+                }, method="GET")
+                try:
+                    response = opener.open(req, timeout=min(12.0, remaining))
+                except HTTPError as error:
+                    response = error
+                with response:
+                    check_current()
+                    if response.status in {429, 503}:
+                        raise SiteSessionError("rate_limited", retry_after_seconds(
+                            response.headers.get("Retry-After"), self.wall_time()))
+                    if response.status != 200:
+                        raise SiteSessionError("invalid_sso_page")
+                    data = response.read(MAX_BYTES + 1)
+                    check_current()
+                    if len(data) > MAX_BYTES:
+                        raise SiteSessionError("invalid_sso_page")
+                    return data.decode("utf-8", errors="strict")
+
             for _ in range(8):
                 check_current()
                 current = self._safe_url(current, endpoint)
                 remaining = deadline - self.clock()
                 if remaining <= 0:
                     raise SiteSessionError("network_error")
-                request = Request(current, headers={
-                    "User-Agent": "PigeonPal/0.3 (local authorized site SSO)",
+                headers = {
+                    "User-Agent": AUTH_USER_AGENT,
                     "Accept": "text/html,application/xhtml+xml",
-                }, method="GET")
+                }
+                if payload is not None:
+                    # current was validated against CAS and the exact source's
+                    # service callback. Never POST this body to a source host.
+                    if urlsplit(current).hostname != CAS_HOST:
+                        raise SiteSessionError("unexpected_destination")
+                    headers.update({"Content-Type": "application/x-www-form-urlencoded",
+                                    "Origin": "https://" + CAS_HOST, "Referer": current})
+                    credential_posted = True
+                request = Request(current, data=payload, headers=headers,
+                                  method="POST" if payload is not None else "GET")
+                payload = None
                 try:
                     try:
                         response = opener.open(request, timeout=min(12.0, remaining))
@@ -291,8 +339,40 @@ class SiteSessionProvider:
                         login_form = _LoginPage(html).has_login_form
                         if urlsplit(current).hostname == CAS_HOST:
                             if login_form:
-                                self.manager.invalidate_campus(campus)
-                                raise SiteSessionError("auth_required")
+                                page = _Page(html)
+                                if page.needs_challenge():
+                                    raise SiteSessionError("challenge_required", 3600.0)
+                                if credential_posted:
+                                    code = page.failure_code()
+                                    raise SiteSessionError(code if code in ERROR_CODES else "login_rejected", 3600.0)
+                                form = page.login_form()
+                                if form is None or form["method"] != "post":
+                                    raise SiteSessionError("invalid_sso_page")
+                                # Keep the school's service identifier unchanged;
+                                # upgrade transport to HTTPS, as in account login.
+                                action = self._safe_url(urljoin(current, form["action"] or current), endpoint)
+                                if urlsplit(action).hostname != CAS_HOST:
+                                    raise SiteSessionError("unexpected_destination")
+                                field_service = form["inputs"].get("service")
+                                if field_service and field_service != parse_qs(urlsplit(action).query)["service"][0]:
+                                    raise SiteSessionError("unexpected_destination")
+                                key = public_key()
+                                check_current()
+                                try:
+                                    payload = self.manager.campus_submission(
+                                        campus, form["inputs"]["execution"], key)
+                                except ValueError:
+                                    raise SiteSessionError("invalid_sso_page") from None
+                                except Exception:
+                                    raise SiteSessionError("credential_unavailable", 3600.0) from None
+                                finally:
+                                    form["inputs"].clear()
+                                    form["hidden"].clear()
+                                    key = None
+                                if payload is None:
+                                    raise SiteSessionError("session_changed")
+                                current = action
+                                continue
                             raise SiteSessionError("invalid_sso_page")
                         if login_form:
                             raise SiteSessionError("auth_required")
@@ -305,6 +385,7 @@ class SiteSessionProvider:
                         with self._lock:
                             check_current()
                             self._sessions[source_id] = session
+                            completed = True
                         return session
                 finally:
                     last_finished = self.clock()
@@ -316,9 +397,10 @@ class SiteSessionProvider:
         except Exception:
             raise SiteSessionError("invalid_sso_page") from None
         finally:
-            # CAS may rotate its SSO cookie when issuing a service ticket.
-            # Apply only CAS-origin updates, only to the still-current identity.
-            if self.manager.campus_session() is campus:
+            # Only a completed site login can publish CAS-cookie rotations.
+            # A failed source login must not replace the campus session's
+            # cookies with its anonymous/rejected login-form cookies.
+            if completed and self.manager.campus_session() is campus:
                 for key, cookie in jar.cas_updates.items():
                     if cookie.is_expired():
                         try:
@@ -329,4 +411,4 @@ class SiteSessionProvider:
                         campus.cookies.set_cookie(copy.copy(cookie))
             jar.clear()
             jar.cas_updates.clear()
-            html = None
+            html = payload = request = None

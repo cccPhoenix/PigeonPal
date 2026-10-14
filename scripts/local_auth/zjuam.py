@@ -65,7 +65,7 @@ class LoginResult:
 
 
 class _SignedInRedirect(Exception):
-    """A fresh CAS session may leave CAS; its destination is never visited."""
+    """CAS returned a school destination; confirm its session without visiting it."""
 
 
 class _HostCookiePolicy(http.cookiejar.DefaultCookiePolicy):
@@ -325,7 +325,8 @@ class _CASClient:
         self.jar.add_cookie_header(request)
         if data is None and _is_login_path(parts.path):
             self.login_cookie_sent |= any(
-                item.partition("=")[0].strip().upper() in {"CASTGC", "TGC"}
+                item.partition("=")[0].strip().upper() not in _CSRF_COOKIES
+                and bool(item.partition("=")[2])
                 for item in request.get_header("Cookie", "").split(";")
             )
         try:
@@ -340,12 +341,14 @@ class _CASClient:
                     location = response.headers.get("Location")
                     if not location:
                         raise AuthError("invalid_cas_page")
+                    destination = urljoin(current, location)
                     try:
-                        return None, self.redirect_url(urljoin(current, location))
+                        return None, self.redirect_url(destination)
                     except AuthError as error:
                         if (sso_baseline is not None
                                 and error.reason in {"blocked_host", "blocked_scheme", "blocked_port", "blocked_service"}
-                                and _login_cookies(self.jar, self.wall_time()) - sso_baseline):
+                                and _school_destination(destination)
+                                and _login_cookies(self.jar, self.wall_time())):
                             raise _SignedInRedirect() from None
                         raise
                 if status in {429, 503}:
@@ -408,17 +411,38 @@ def _login_action(client: _CASClient, landing: str, form: dict) -> str:
     return action
 
 
+_CSRF_COOKIES = frozenset({"_CSRF", "CSRF-TOKEN", "XSRF-TOKEN"})
+
+
+def _school_destination(url):
+    """Inspect a normal school redirect without requesting its URL or ticket."""
+    try:
+        parts = urlsplit(url)
+        return bool(
+            parts.hostname and parts.hostname.endswith(".zju.edu.cn")
+            and not parts.username and not parts.password
+            and parts.scheme in {"https", "http"}
+            and parts.port in {None, 443 if parts.scheme == "https" else 80}
+            and not (parts.hostname in HOSTS and _is_login_path(parts.path))
+        )
+    except (TypeError, ValueError):
+        return False
+
+
 def _login_cookies(jar, now):
-    """Private identity fingerprints of CAS cookies applicable to /cas/login.
+    """Private fingerprints of non-CSRF session cookies applicable to CAS.
 
     Secure is a browser transport attribute, not a login-success signal. All
     requests in this client already enforce HTTPS and the official CAS host.
+    CAS can retain JSESSIONID or use a deployment-specific ticket-cookie name.
+    Neither a cookie's name nor a changed value proves authentication: a CAS
+    success response (including the confirmation below) is required as well.
     """
     path = urlsplit(LOGIN_URL).path
     return frozenset(
         (cookie.name, cookie.domain, cookie.path, cookie.value)
         for cookie in jar
-        if cookie.name.upper() in {"CASTGC", "TGC"} and bool(cookie.value)
+        if cookie.name.upper() not in _CSRF_COOKIES and bool(cookie.value)
         and cookie.domain.lstrip(".").lower() in {"zjuam.zju.edu.cn", "zju.edu.cn"}
         and not cookie.is_expired(now)
         and (path == cookie.path or path.startswith(cookie.path.rstrip("/") + "/"))
@@ -435,24 +459,24 @@ def _check_page(page):
 
 
 def _confirm_sso(client, baseline):
-    """Confirm the newly issued cookie at CAS without visiting a portal."""
+    """Ask CAS whether this transaction's session is signed in, not a portal."""
     client.emit("verifying_login")
     try:
         html, _ = client.follow(LOGIN_URL, sso_baseline=baseline)
     except _SignedInRedirect:
         # CAS accepted the cookie presented to its login endpoint and chose a
         # post-login destination. We only observe that response, never visit it.
-        if client.login_cookie_sent and _login_cookies(client.jar, client.wall_time()) - baseline:
+        if client.login_cookie_sent and _login_cookies(client.jar, client.wall_time()):
             return
         raise AuthError("invalid_cas_page", reason="sso_not_confirmed") from None
     page = _Page(html)
     _check_page(page)
     if (not client.login_cookie_sent
-            or not (_login_cookies(client.jar, client.wall_time()) - baseline)
+            or not _login_cookies(client.jar, client.wall_time())
             or not page.authenticated_success()):
         raise AuthError("invalid_cas_page", reason="sso_not_confirmed")
-    # A retained new TGC sent back to CAS and an explicit success page form
-    # the evidence. A generic HTTP 200 or the cookie alone never suffices.
+    # CAS may authenticate an existing server-side JSESSIONID without changing
+    # its value. A generic HTTP 200 or the session cookie alone never suffices.
 
 
 def login_zjuam(username: str, password: str, cancel: threading.Event,
@@ -504,7 +528,7 @@ def login_zjuam(username: str, password: str, cancel: threading.Event,
         page = None if redirected else _Page(html)
         if page is not None:
             _check_page(page)
-        if not (_login_cookies(client.jar, client.wall_time()) - baseline):
+        if not _login_cookies(client.jar, client.wall_time()):
             raise AuthError("invalid_cas_page", reason="sso_cookie_missing")
         if page is None or not page.authenticated_success():
             _confirm_sso(client, baseline)

@@ -42,9 +42,10 @@ def clean_list(source: Source, items: list[dict]) -> list[dict]:
         if not re.fullmatch(re.escape(source.id) + r":[A-Za-z0-9_-]+", item_id) or not title:
             raise CrawlFailure("invalid_list_metadata")
         try:
-            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", published):
-                raise ValueError
-            date.fromisoformat(published)
+            if published or source.id != "itc":
+                if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", published):
+                    raise ValueError
+                date.fromisoformat(published)
         except (TypeError, ValueError):
             raise CrawlFailure("invalid_list_date") from None
         url = notice_url(item.get("url", ""), source.host)
