@@ -1,0 +1,332 @@
+"""GET-only site SSO bootstrap, independent of campus credential validation.
+
+The caller supplies an already validated, in-memory campus session. No password
+or vault is read here; failures describe the selected source only. A login form
+served by the official CAS host is the sole evidence used to expire campus SSO.
+"""
+
+from __future__ import annotations
+
+import copy
+import http.cookiejar
+from html.parser import HTMLParser
+import threading
+import time
+from typing import Mapping, Protocol
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, urljoin, urlsplit, urlunsplit
+from urllib.request import (
+    HTTPRedirectHandler, HTTPCookieProcessor, ProxyHandler, Request, build_opener,
+)
+
+from crawlers.auth import AuthSession
+from crawlers.http import retry_after_seconds
+
+
+CAS_HOST = "zjuam.zju.edu.cn"
+MAX_BYTES = 1024 * 1024
+ERROR_CODES = {
+    "auth_required", "cancelled", "network_error", "campus_network_required",
+    "access_denied", "rate_limited", "invalid_sso_page",
+    "unexpected_destination", "session_changed",
+}
+
+
+class SiteSessionError(RuntimeError):
+    def __init__(self, code: str, retry_after: float | None = None):
+        self.code = code if code in ERROR_CODES else "invalid_sso_page"
+        self.retry_after = retry_after
+        super().__init__(self.code)
+
+
+class _CampusManager(Protocol):
+    def campus_session(self) -> AuthSession | None: ...
+    def invalidate_campus(self, expected_session: AuthSession) -> None: ...
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+class _CookiePolicy(http.cookiejar.DefaultCookiePolicy):
+    def __init__(self, hosts, *, parent_domain=False):
+        super().__init__(strict_ns_domain=self.DomainStrict)
+        self.hosts = frozenset(hosts)
+        self.parent_domain = parent_domain
+
+    def _scope(self, cookie, request):
+        host = urlsplit(request.full_url).hostname
+        domain = cookie.domain.lstrip(".").lower()
+        return host in self.hosts and (
+            domain == host
+            or self.parent_domain and host == CAS_HOST and domain == "zju.edu.cn"
+        )
+
+    def set_ok(self, cookie, request):
+        return self._scope(cookie, request) and super().set_ok(cookie, request)
+
+    def return_ok(self, cookie, request):
+        return self._scope(cookie, request) and super().return_ok(cookie, request)
+
+
+def _cookie_key(cookie):
+    return cookie.domain, cookie.path, cookie.name
+
+
+class _TransactionJar(http.cookiejar.CookieJar):
+    """Keep track of cookies refreshed by CAS, rather than by a source host."""
+
+    def __init__(self, host):
+        super().__init__(_CookiePolicy({CAS_HOST, host}, parent_domain=True))
+        self.cas_updates = {}
+
+    def extract_cookies(self, response, request):
+        super().extract_cookies(response, request)
+        if urlsplit(request.full_url).hostname == CAS_HOST:
+            for cookie in self.make_cookies(response, request):
+                if self._policy.set_ok(cookie, request):
+                    self.cas_updates[_cookie_key(cookie)] = copy.copy(cookie)
+
+
+class _LoginPage(HTMLParser):
+    def __init__(self, html):
+        super().__init__(convert_charrefs=True)
+        self.current = None
+        self.has_login_form = False
+        self.feed(html)
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "form":
+            self.current = set()
+        elif tag == "input" and self.current is not None:
+            self.current.add(attrs.get("name", ""))
+
+    def handle_endtag(self, tag):
+        if tag == "form" and self.current is not None:
+            self.has_login_form |= {"username", "password", "execution"} <= self.current
+            self.current = None
+
+
+class SiteSessionProvider:
+    """Own per-source cookies while using campus SSO only on the worker thread.
+
+    ``session_for`` is a pure lookup. ``prepare`` performs a bounded GET-only
+    browser-style redirect transaction, with no crawler pacing sleeps. The
+    resulting timestamp lets the crawler pace its next ordinary page fetch.
+    """
+
+    def __init__(self, manager: _CampusManager, endpoints: Mapping[str, str], *,
+                 opener_factory=None, monotonic=time.monotonic, wall_time=time.time):
+        self.manager = manager
+        self.endpoints = dict(endpoints)
+        self.clock = monotonic
+        self.wall_time = wall_time
+        self.opener_factory = opener_factory or (
+            lambda jar: build_opener(ProxyHandler({}), _NoRedirect(), HTTPCookieProcessor(jar))
+        )
+        self._lock = threading.RLock()
+        self._campus = None
+        self._sessions = {}
+        self._epochs = {}
+        self._generation = 0
+        self._closed = False
+        for endpoint in self.endpoints.values():
+            try:
+                parts = urlsplit(endpoint)
+                if (
+                    parts.scheme != "https" or not parts.hostname
+                    or not parts.hostname.endswith(".zju.edu.cn") or parts.hostname == CAS_HOST
+                    or parts.username or parts.password or parts.port not in {None, 443}
+                    or parts.query or parts.fragment
+                ):
+                    raise ValueError()
+            except (TypeError, ValueError):
+                raise ValueError("invalid_site_endpoint") from None
+
+    def _sync(self):
+        current = self.manager.campus_session()
+        if current is not self._campus:
+            for session in self._sessions.values():
+                session.cookies.clear()
+            self._sessions.clear()
+            self._campus = current
+            self._generation += 1
+        return current
+
+    def session_for(self, source_id: str) -> AuthSession | None:
+        with self._lock:
+            self._sync()
+            return None if self._closed else self._sessions.get(source_id)
+
+    def invalidate(self, source_id: str) -> None:
+        with self._lock:
+            session = self._sessions.pop(source_id, None)
+            if session is not None:
+                session.cookies.clear()
+            self._epochs[source_id] = self._epochs.get(source_id, 0) + 1
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            self._generation += 1
+            for session in self._sessions.values():
+                session.cookies.clear()
+            self._sessions.clear()
+            self._campus = None
+
+    @staticmethod
+    def _safe_url(url, endpoint):
+        try:
+            parts = urlsplit(url)
+            target = urlsplit(endpoint)
+            if parts.username or parts.password or parts.fragment:
+                raise ValueError()
+            if parts.hostname == target.hostname:
+                if parts.scheme == "http" and parts.port in {None, 80}:
+                    return urlunsplit(("https", target.hostname, parts.path, parts.query, ""))
+                if parts.scheme != "https" or parts.port not in {None, 443}:
+                    raise ValueError()
+            elif parts.hostname == CAS_HOST:
+                if parts.scheme != "https" or parts.port not in {None, 443} or parts.path != "/cas/login":
+                    raise ValueError()
+                services = parse_qs(parts.query).get("service", [])
+                if len(services) != 1:
+                    raise ValueError()
+                service = urlsplit(services[0])
+                if (
+                    service.hostname != target.hostname or service.username or service.password
+                    or service.scheme not in {"http", "https"}
+                    or service.port not in {None, 80 if service.scheme == "http" else 443}
+                    or service.path != target.path or service.query or service.fragment
+                ):
+                    raise ValueError()
+            else:
+                raise ValueError()
+            return urlunsplit(parts._replace(fragment=""))
+        except (TypeError, ValueError):
+            raise SiteSessionError("unexpected_destination") from None
+
+    def prepare(self, source_id: str, cancel: threading.Event) -> AuthSession:
+        with self._lock:
+            campus = self._sync()
+            if self._closed or cancel.is_set():
+                raise SiteSessionError("cancelled")
+            if campus is None:
+                raise SiteSessionError("auth_required")
+            if source_id not in self.endpoints:
+                raise SiteSessionError("unexpected_destination")
+            if source_id in self._sessions:
+                return self._sessions[source_id]
+            generation = self._generation
+            epoch = self._epochs.get(source_id, 0)
+        endpoint = self.endpoints[source_id]
+        host = urlsplit(endpoint).hostname
+        jar = _TransactionJar(host)
+        for cookie in campus.cookies:
+            if cookie.domain.lstrip(".").lower() in {CAS_HOST, "zju.edu.cn"}:
+                jar.set_cookie(copy.copy(cookie))
+        deadline = self.clock() + 45.0
+        last_finished = None
+        html = None
+
+        def check_current():
+            if cancel.is_set():
+                raise SiteSessionError("cancelled")
+            with self._lock:
+                if self._closed:
+                    raise SiteSessionError("cancelled")
+                if (
+                    self._sync() is not campus or self._generation != generation
+                    or self._epochs.get(source_id, 0) != epoch
+                ):
+                    raise SiteSessionError("session_changed")
+
+        try:
+            opener = self.opener_factory(jar)
+            current = endpoint
+            for _ in range(8):
+                check_current()
+                current = self._safe_url(current, endpoint)
+                remaining = deadline - self.clock()
+                if remaining <= 0:
+                    raise SiteSessionError("network_error")
+                request = Request(current, headers={
+                    "User-Agent": "PigeonPal/0.3 (local authorized site SSO)",
+                    "Accept": "text/html,application/xhtml+xml",
+                }, method="GET")
+                try:
+                    try:
+                        response = opener.open(request, timeout=min(12.0, remaining))
+                    except HTTPError as error:
+                        response = error
+                    with response:
+                        check_current()
+                        status = response.status
+                        if status in {301, 302, 303, 307, 308}:
+                            location = response.headers.get("Location")
+                            if not location:
+                                raise SiteSessionError("invalid_sso_page")
+                            current = self._safe_url(urljoin(current, location), endpoint)
+                            continue
+                        if status in {429, 503}:
+                            raise SiteSessionError("rate_limited", retry_after_seconds(response.headers.get("Retry-After"), self.wall_time()))
+                        if status in {401, 403}:
+                            raise SiteSessionError("access_denied")
+                        if status != 200:
+                            raise SiteSessionError("network_error")
+                        if response.headers.get_content_type() not in {"text/html", "application/xhtml+xml"}:
+                            raise SiteSessionError("invalid_sso_page")
+                        body = response.read(MAX_BYTES + 1)
+                        check_current()
+                        if len(body) > MAX_BYTES:
+                            raise SiteSessionError("invalid_sso_page")
+                        try:
+                            html = body.decode(response.headers.get_content_charset() or "utf-8", errors="replace")
+                        except LookupError:
+                            raise SiteSessionError("invalid_sso_page") from None
+                        if "该信息仅允许校内地址访问" in html or "您当前ip并非校内地址" in html:
+                            raise SiteSessionError("campus_network_required", 3600.0)
+                        login_form = _LoginPage(html).has_login_form
+                        if urlsplit(current).hostname == CAS_HOST:
+                            if login_form:
+                                self.manager.invalidate_campus(campus)
+                                raise SiteSessionError("auth_required")
+                            raise SiteSessionError("invalid_sso_page")
+                        if login_form:
+                            raise SiteSessionError("auth_required")
+                        result_jar = http.cookiejar.CookieJar(_CookiePolicy({host}))
+                        for cookie in jar:
+                            if cookie.domain.lstrip(".").lower() == host:
+                                result_jar.set_cookie(copy.copy(cookie))
+                        last_finished = self.clock()
+                        session = AuthSession(result_jar, last_request_monotonic=last_finished)
+                        with self._lock:
+                            check_current()
+                            self._sessions[source_id] = session
+                        return session
+                finally:
+                    last_finished = self.clock()
+            raise SiteSessionError("invalid_sso_page")
+        except SiteSessionError:
+            raise
+        except (URLError, TimeoutError, OSError):
+            raise SiteSessionError("network_error") from None
+        except Exception:
+            raise SiteSessionError("invalid_sso_page") from None
+        finally:
+            # CAS may rotate its SSO cookie when issuing a service ticket.
+            # Apply only CAS-origin updates, only to the still-current identity.
+            if self.manager.campus_session() is campus:
+                for key, cookie in jar.cas_updates.items():
+                    if cookie.is_expired():
+                        try:
+                            campus.cookies.clear(*key)
+                        except KeyError:
+                            pass
+                    else:
+                        campus.cookies.set_cookie(copy.copy(cookie))
+            jar.clear()
+            jar.cas_updates.clear()
+            html = None

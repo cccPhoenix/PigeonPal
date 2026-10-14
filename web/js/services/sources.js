@@ -53,6 +53,12 @@ export function noticeCopy(item, now = Date.now()) {
 // ---------------------------------------------------------------------------
 // Demo sources
 
+// Stable channels for the local crawler; these are never fed by demo adapters.
+export const LOCAL_CHANNELS = [
+  { id: 'src-yunfeng', sourceId: 'yunfeng', title: '云峰通知', emoji: '🏫', tint: '#eef3ee', site: 'yunfeng.zju.edu.cn', url: 'https://yunfeng.zju.edu.cn/on/53544/list.psp', every: '每 5 分钟', requiresAuth: false },
+  { id: 'src-itc', sourceId: 'itc', title: 'ITC 通知', emoji: '💻', tint: '#eaf2ff', site: 'itc.zju.edu.cn', url: 'https://itc.zju.edu.cn/90618/list.psp', every: '每 5 分钟', requiresAuth: true },
+]
+
 export const DEMO_CHANNELS = [
   { id: 'talks', title: '学术报告', emoji: '🎤', tint: '#fff1e5', site: '示例 · 学术报告页', every: '每 30 分钟' },
   { id: 'academic', title: '教务通知', emoji: '📌', tint: '#eaf2ff', site: '示例 · 教务处通知', every: '每 1 小时' },

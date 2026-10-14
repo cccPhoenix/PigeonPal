@@ -2,6 +2,14 @@
 node_modules/
 .env
 .env.*
+.auth-key
+auth.lock
+*.env.*.tmp
+*.auth-key.*.tmp
 *.log
 __pycache__/
+data/
+crawler-state.json
+crawler-state.json.bak
+crawler.lock
 .claude/settings.local.json

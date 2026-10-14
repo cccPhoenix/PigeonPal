@@ -3,7 +3,7 @@
 
 import { newId } from './reminders.js'
 import { hasLook } from './mark/looks.js'
-import { DEMO_CHANNELS } from './services/sources.js'
+import { DEMO_CHANNELS, LOCAL_CHANNELS } from './services/sources.js'
 
 export const STORAGE_KEY = 'pigeonpal.v1'
 const KINDS = ['text', 'notice', 'reminder']
@@ -22,8 +22,8 @@ export function createInitialState() {
       quietStart: '23:00',
       quietEnd: '07:30',
     },
-    channels: [{ id: 'bot', kind: 'bot' }, ...DEMO_CHANNELS.map(c => ({ kind: 'source', notify: 'all', ...c }))],
-    messages: Object.fromEntries(['bot', ...DEMO_CHANNELS.map(c => c.id)].map(id => [id, []])),
+    channels: [{ id: 'bot', kind: 'bot' }, ...[...LOCAL_CHANNELS, ...DEMO_CHANNELS].map(c => ({ kind: 'source', notify: 'all', ...c }))],
+    messages: Object.fromEntries(['bot', ...LOCAL_CHANNELS.map(c => c.id), ...DEMO_CHANNELS.map(c => c.id)].map(id => [id, []])),
     reminders: [],
     unread: {},
     seenItems: [],
