@@ -59,10 +59,14 @@ client.events(cursor)
 
 | 方法与路径 | 请求 | 响应 |
 | --- | --- | --- |
-| `GET /api/ai/settings` | 无 | 模型、基础地址、开关和 `hasKey`；不会返回 key |
-| `POST /api/ai/settings` | `apiKey?`, `model`, `baseUrl`, `automatic`, `allowProtected`, `automaticDeadlines` | 保存配置，留空 key 保留旧 key |
-| `POST /api/ai/clear` | `{}` | 只清除 API 配置 |
-| `POST /api/ai/check` | `{}` | 读取模型列表验证已保存配置 |
+| `GET /api/ai/settings` | 无 | 当前配置、全局开关、`activeProfileId`、`profiles` 列表；仅返回脱敏 `keyHint` |
+| `POST /api/ai/profiles` | `name`, `apiKey`, `model?`, `baseUrl?` | 201，完整设置快照与 `createdProfileId`；首份自动启用，后续保留当前选择 |
+| `POST /api/ai/profiles/update` | `id`, `name?`, `apiKey?`, `model?`, `baseUrl?` | 修改指定配置，空 Key 保留旧值；连接参数变化后重置验证状态 |
+| `POST /api/ai/profiles/select` | `id` | 切换当前使用配置并即时应用 |
+| `POST /api/ai/profiles/delete` | `id` | 删除指定配置；删除当前项后暂停 AI，其他项保留 |
+| `POST /api/ai/settings` | `automatic?`, `allowProtected?`, `automaticDeadlines?`；兼容 `apiKey?`, `model?`, `baseUrl?` | 保存全局偏好；旧调用方式修改当前配置，留空 Key 保留旧值 |
+| `POST /api/ai/clear` | `{}` | 清除全部 API 配置和偏好，不影响校园绑定、通知及提醒 |
+| `POST /api/ai/check` | `profileId?` | 验证指定或当前配置，返回 `{ok, model, profileId, settings}`；不切换使用项 |
 | `GET /api/ai/status` | 无 | 处理状态计数、固定错误码和退避时间 |
 | `POST /api/chat` | `requestId`, `text`, `channelId`, `history`, `profile`, `noticeId?`, `quotedText?` | `{ events: [...] }` |
 | `GET /api/notices` | `source?`, `limit`（1–100）, `offset` | `{ items, total, nextOffset }`；不包含全文 |
@@ -76,6 +80,6 @@ client.events(cursor)
 
 提醒时间字段为 Unix 毫秒；创建／修改接口也接受带时区的 ISO 8601。通知原站发布日期为日期字符串，可为空；模型提取时间为带时区的 ISO 8601 或仅日期字符串，缺失写 null。事件游标不是时间戳。
 
-配置保存即时生效；更换配置时丢弃旧通知处理中返回的结果。通知整理缓存同时检查正文／版本、模型、地址和提示词版本。遇到损坏缓存先读有效备份，无法恢复时保留文件并暂停处理，不清空原通知。
+API 目录以 schemaVersion 2 加密保存，旧单 Key 配置在读取时兼容迁移，最多 20 份。配置切换和偏好保存即时生效；更换当前配置时丢弃旧通知处理中返回的结果。未启用项的增改与验证不重置模型工作线程。通知整理缓存同时检查正文／版本、模型、地址和提示词版本。遇到损坏缓存先读有效备份，无法恢复时保留文件并暂停处理，不清空原通知。
 
 完整运行条件、DDL 默认规则和本机验收清单见 [ai.md](ai.md)。

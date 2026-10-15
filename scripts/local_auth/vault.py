@@ -58,14 +58,14 @@ def _private_mode(path: Path, mode: int) -> None:
         pass
 
 
-def _credentials(username: str, password: str) -> Credentials:
+def _credentials(username: str, password: str, *, password_limit: int = 4096) -> Credentials:
     if (
         not isinstance(username, str)
         or not isinstance(password, str)
         or not username.strip()
         or not password
         or len(username) > 256
-        or len(password) > 4096
+        or len(password) > password_limit
     ):
         raise VaultError("credential_input_invalid")
     return Credentials(username, password)
@@ -74,7 +74,13 @@ def _credentials(username: str, password: str) -> Credentials:
 class CredentialVault:
     """One .env ciphertext and one .auth-key in a caller-selected directory."""
 
-    def __init__(self, directory: Path):
+    def __init__(self, directory: Path, *, password_limit: int = 4096):
+        if type(password_limit) is not int or not 1 <= password_limit <= 131072:
+            raise ValueError("invalid_password_limit")
+        # Campus credentials retain their original limits. The separate AI vault
+        # can opt into a bounded larger encrypted configuration catalog.
+        self.password_limit = password_limit
+        self.env_limit = max(_MAX_ENV_BYTES, password_limit * 8)
         self.directory = Path(directory)
         self.env_path = self.directory / ".env"
         self.key_path = self.directory / ".auth-key"
@@ -123,7 +129,7 @@ class CredentialVault:
                 return None
         except OSError:
             raise VaultError("credential_read_failed") from None
-        raw = self._read_file(self.env_path, _MAX_ENV_BYTES, "credential_file_invalid")
+        raw = self._read_file(self.env_path, self.env_limit, "credential_file_invalid")
         try:
             values: dict[str, str] = {}
             for line in raw.decode("utf-8").splitlines():
@@ -148,7 +154,7 @@ class CredentialVault:
             decoded = json.loads(payload.decode("utf-8"))
             if not isinstance(decoded, dict) or set(decoded) != {"username", "password"}:
                 raise VaultError("credential_file_invalid")
-            return _credentials(decoded["username"], decoded["password"])
+            return _credentials(decoded["username"], decoded["password"], password_limit=self.password_limit)
         except (UnicodeError, ValueError, TypeError, VaultError):
             raise VaultError("credential_file_invalid") from None
 
@@ -209,7 +215,7 @@ class CredentialVault:
 
     def save(self, username: str, password: str) -> None:
         """Replace ciphertext atomically, preserving the previous binding on error."""
-        credentials = _credentials(username, password)
+        credentials = _credentials(username, password, password_limit=self.password_limit)
         with self._lock:
             # Do not silently overwrite an existing binding that cannot decrypt.
             self._read_unlocked()
