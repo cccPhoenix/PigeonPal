@@ -1,4 +1,4 @@
-"""HTTPS-only transport with per-site pacing and fixed, redacted errors."""
+"""Site-scoped transport with per-site pacing and fixed, redacted errors."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ MIN_DELAY = 15.0
 MAX_DELAY = 30.0
 MAX_HTML_BYTES = 1024 * 1024
 MAX_RETRY_AFTER = 86400.0
+PUBLIC_HTTP_HOST = "qsxy.zju.edu.cn"
 SENSITIVE_QUERY_KEYS = {
     "ticket", "token", "access_token", "id_token", "refresh_token",
     "authorization", "password", "passwd", "username", "session",
@@ -39,23 +40,34 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 def has_sensitive_query(url: str) -> bool:
-    return any(key.lower() in SENSITIVE_QUERY_KEYS for key, _ in parse_qsl(urlsplit(url).query))
+    return any(key.lower() in SENSITIVE_QUERY_KEYS
+               for key, _ in parse_qsl(urlsplit(url).query, keep_blank_values=True))
 
 
-def notice_url(url: str, host: str) -> str:
-    """Accept only credential-free, same-site article URLs; force HTTPS."""
+def notice_url(url: str, host: str, *, allow_http: bool = False) -> str:
+    """Validate a same-site URL, with HTTP allowed only for public QSXY pages.
+
+    Other sources keep their existing HTTPS upgrade. An opted-in QSXY source
+    preserves the incoming scheme so HTTPS redirects are never downgraded.
+    """
     try:
+        if allow_http and host != PUBLIC_HTTP_HOST:
+            raise CrawlFailure("invalid_notice_url")
         parsed = urlsplit(url)
         if (
             parsed.scheme not in {"http", "https"} or parsed.hostname != host
-            or parsed.username or parsed.password or parsed.port not in {None, 80, 443}
+            or parsed.username is not None or parsed.password is not None
+            or parsed.port not in {None, 80, 443}
             or parsed.query or ";" in parsed.path
         ):
+            raise CrawlFailure("invalid_notice_url")
+        if allow_http and parsed.port not in {None, 80 if parsed.scheme == "http" else 443}:
             raise CrawlFailure("invalid_notice_url")
     except ValueError:
         raise CrawlFailure("invalid_notice_url") from None
     # Do not carry an explicit HTTP port into the HTTPS transport.
-    return urlunsplit(("https", host, parsed.path, "", ""))
+    scheme = parsed.scheme if allow_http else "https"
+    return urlunsplit((scheme, host, parsed.path, "", ""))
 
 
 def retry_after_seconds(value: str | None, now: float) -> float | None:
@@ -76,11 +88,14 @@ class SlowClient:
 
     def __init__(
         self, host: str, protected: bool = False, session: AuthSession | None = None,
-        *, opener: OpenerDirector | None = None, monotonic=time.monotonic,
+        *, allow_http: bool = False, opener: OpenerDirector | None = None, monotonic=time.monotonic,
         sleep=time.sleep, wall_time=time.time, choose_delay=random.uniform,
     ):
+        if allow_http and (host != PUBLIC_HTTP_HOST or protected or session is not None):
+            raise CrawlFailure("invalid_transport_policy")
         self.host = host
         self.protected = protected
+        self.allow_http = allow_http
         self.clock = monotonic
         self.sleep = sleep
         self.wall_time = wall_time
@@ -103,7 +118,7 @@ class SlowClient:
                 self.sleep(remaining)
 
     def html(self, url: str) -> tuple[str, str]:
-        current = notice_url(url, self.host)
+        current = notice_url(url, self.host, allow_http=self.allow_http)
         for _ in range(5):
             self._wait()
             self.request_count += 1
@@ -129,7 +144,7 @@ class SlowClient:
                                 raise CrawlFailure("auth_required" if self.protected else "unexpected_auth")
                             if has_sensitive_query(target):
                                 raise CrawlFailure("auth_required" if self.protected else "unsafe_redirect")
-                            current = notice_url(target, self.host)
+                            current = notice_url(target, self.host, allow_http=self.allow_http)
                         except ValueError:
                             raise CrawlFailure("unsafe_redirect") from None
                         continue

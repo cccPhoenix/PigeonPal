@@ -71,8 +71,9 @@ class CrawlEngine:
     def _client(self, runtime: Runtime, session: AuthSession | None):
         if runtime.client is None or runtime.session is not session:
             previous = runtime.client
+            options = {"allow_http": True} if runtime.source.allow_http else {}
             runtime.client = self.client_factory(
-                runtime.source.host, runtime.source.requires_auth, session,
+                runtime.source.host, runtime.source.requires_auth, session, **options,
             )
             if previous is not None:
                 runtime.client.last_finished = previous.last_finished
@@ -131,6 +132,8 @@ class CrawlEngine:
                 raise CrawlFailure("list_parse_failed") from None
             synced = self.store.sync_list(source.id, items, self.clock())
             counts.update(listItems=len(items), new=synced["new"], metadataChanged=synced["changed"])
+            if any(item.get("fetchable") is False for item in items):
+                counts["linksOnly"] = sum(item.get("fetchable") is False for item in items)
             jobs = self.store.detail_jobs(source.id, self.clock(), limit=self.detail_limit,
                                          recheck_after=RECHECK_AFTER, recheck_limit=1)
             for job in jobs:
@@ -156,6 +159,7 @@ class CrawlEngine:
                     # articles. Network/access/limit errors stop the whole round.
                     if failure.code not in {
                         "not_found", "article_parse_failed", "empty_article_body", "invalid_article_date",
+                        "image_only_article", "attachment_only_article",
                     }:
                         raise
             state = "partial" if counts["detailsFailed"] else "ready"

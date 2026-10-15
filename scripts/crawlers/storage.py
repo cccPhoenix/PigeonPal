@@ -92,13 +92,17 @@ def _key(source_id, notice_id):
 
 def _flags(row, extra=()):
     flags = {flag for flag in extra if isinstance(flag, str) and _CODE.fullmatch(flag)}
-    flags.difference_update({"pending_body", "body_failed", "has_attachments", "publication_date_missing"})
+    flags.difference_update({"pending_body", "body_failed", "body_not_fetched", "has_attachments", "publication_date_missing"})
     if not row.get("publishedAt"):
         flags.add("publication_date_missing")
-    if row["state"] == "pending" or not row.get("content"):
+    if row["state"] == "skipped":
+        flags.add("body_not_fetched")
+    elif row["state"] == "pending" or not row.get("content"):
         flags.add("pending_body")
     if row["state"] == "failed":
         flags.add("body_failed")
+        if row.get("lastError") in {"image_only_article", "attachment_only_article"}:
+            flags.add("image_only" if row["lastError"] == "image_only_article" else "attachment_only")
     if row.get("attachments"):
         flags.add("has_attachments")
     return sorted(flags)
@@ -142,13 +146,20 @@ def _validate(state):
                 raise ValueError
             if not isinstance(row["sourceId"], str) or not isinstance(row["id"], str) or not row["id"]:
                 raise ValueError
-            if row["sourceId"] not in state["sources"] or row["state"] not in {"pending", "complete", "failed"}:
+            if row["sourceId"] not in state["sources"] or row["state"] not in {"pending", "complete", "failed", "skipped"}:
                 raise ValueError
             if not isinstance(row["listMetadata"], dict) or not isinstance(row["listHash"], str):
                 raise ValueError
             for field in ("title", "url", "publishedAt"):
                 if not isinstance(row["listMetadata"][field], str):
                     raise ValueError
+            if type(row["listMetadata"].get("fetchable", True)) is not bool:
+                raise ValueError
+            list_flags = row["listMetadata"].get("qualityFlags", [])
+            if not isinstance(list_flags, list) or not all(isinstance(flag, str) and _CODE.fullmatch(flag) for flag in list_flags):
+                raise ValueError
+            if row["state"] == "skipped" and row["listMetadata"].get("fetchable", True):
+                raise ValueError
             _url(row["listMetadata"]["url"])
             for field in ("title", "url", "publishedAt", "publisher", "content"):
                 if not isinstance(row[field], str):
@@ -263,7 +274,18 @@ class NoticeStore:
             notice_id = item.get("id")
             if not isinstance(notice_id, str) or not notice_id or not _text(item.get("title")):
                 raise StorageError("invalid_notice_metadata")
-            unique.setdefault(notice_id, {"title": _text(item["title"]), "url": _url(item.get("url")), "publishedAt": _text(item.get("publishedAt"))})
+            metadata = {"title": _text(item["title"]), "url": _url(item.get("url")), "publishedAt": _text(item.get("publishedAt"))}
+            if type(item.get("fetchable", True)) is not bool:
+                raise StorageError("invalid_notice_metadata")
+            if item.get("fetchable") is False:
+                metadata["fetchable"] = False
+            if "qualityFlags" in item:
+                flags = item["qualityFlags"]
+                if not isinstance(flags, list) or not all(isinstance(flag, str) and _CODE.fullmatch(flag) for flag in flags):
+                    raise StorageError("invalid_notice_metadata")
+                if flags:
+                    metadata["qualityFlags"] = sorted(set(flags))
+            unique.setdefault(notice_id, metadata)
 
         def change(state):
             self._source(state, source_id)["lastUpdatedAt"] = now
@@ -275,14 +297,15 @@ class NoticeStore:
                 key = _key(source_id, notice_id)
                 row = state["notices"].get(key)
                 list_hash = _hash(metadata)
+                fetchable = metadata.get("fetchable", True)
                 if row is None:
                     row = {
                         "id": notice_id, "sourceId": source_id, **metadata,
                         "publisher": "", "content": "", "attachments": [], "images": [],
-                        "qualityFlags": ["pending_body"], "state": "pending",
+                        "qualityFlags": metadata.get("qualityFlags", []), "state": "pending" if fetchable else "skipped",
                         "listMetadata": metadata, "listHash": list_hash,
                         "firstSeenAt": now, "lastSeenAt": now, "lastFetchedAt": None,
-                        "lastChangedAt": now, "nextAttemptAt": now,
+                        "lastChangedAt": now, "nextAttemptAt": now if fetchable else None,
                         "contentHash": None, "version": 0, "failureCount": 0,
                         "lastError": None, "isLatest": True,
                     }
@@ -290,9 +313,13 @@ class NoticeStore:
                     state["notices"][key] = row
                     new += 1
                 elif row["listHash"] != list_hash:
+                    old_list_flags = set(row["listMetadata"].get("qualityFlags", []))
+                    flags = set(row["qualityFlags"]) - old_list_flags
+                    flags.update(metadata.get("qualityFlags", []))
                     row.update(metadata)
-                    row.update(listMetadata=metadata, listHash=list_hash, state="pending", nextAttemptAt=now, lastChangedAt=now, failureCount=0, lastError=None)
-                    row["qualityFlags"] = _flags(row, row["qualityFlags"])
+                    row.pop("fetchable", None)
+                    row.update(listMetadata=metadata, listHash=list_hash, state="pending" if fetchable else "skipped", nextAttemptAt=now if fetchable else None, lastChangedAt=now, failureCount=0, lastError=None)
+                    row["qualityFlags"] = _flags(row, flags)
                     changed += 1
                 row["isLatest"], row["lastSeenAt"] = True, now
             return {"new": new, "changed": changed, "total": len(unique)}
@@ -301,7 +328,7 @@ class NoticeStore:
 
     def detail_jobs(self, source_id: str, now: float, limit: int = 3, recheck_after: float = 86400, recheck_limit: int = 1) -> list[dict]:
         now = _time(now)
-        rows = [row for row in self._state["notices"].values() if row["sourceId"] == source_id]
+        rows = [row for row in self._state["notices"].values() if row["sourceId"] == source_id and row["listMetadata"].get("fetchable", True)]
         due = [row for row in rows if row["state"] in {"pending", "failed"} and (row["nextAttemptAt"] or 0) <= now]
         due.sort(key=lambda row: (row["state"] == "pending", row["listMetadata"]["publishedAt"], row["firstSeenAt"]), reverse=True)
         limit = max(0, int(limit))
@@ -324,6 +351,8 @@ class NoticeStore:
         row = self._state["notices"].get(_key(source_id, notice_id))
         if row is None:
             raise StorageError("notice_not_found")
+        if not row["listMetadata"].get("fetchable", True):
+            raise StorageError("notice_not_fetchable")
         content = str(detail.get("content") or "").replace("\r\n", "\n").replace("\r", "\n").strip()
         if not content:
             self.fail_detail(source_id, notice_id, "empty_body", now)
@@ -399,6 +428,8 @@ class NoticeStore:
     @staticmethod
     def _export(row):
         result = {key: copy.deepcopy(value) for key, value in row.items() if key not in {"listMetadata", "listHash"}}
+        if "listMetadata" in row and not row["listMetadata"].get("fetchable", True):
+            result["fetchable"] = False
         for field in _TIMES:
             if field in result:
                 result[field] = _iso(result[field])
@@ -408,7 +439,7 @@ class NoticeStore:
         sources = []
         for source_id, source in sorted(self._state["sources"].items()):
             rows = [row for row in self._state["notices"].values() if row["sourceId"] == source_id]
-            sources.append({**self._export(source), "totalCount": len(rows), "latestCount": sum(row["isLatest"] for row in rows), "pendingCount": sum(row["state"] == "pending" for row in rows), "failedCount": sum(row["state"] == "failed" for row in rows), "completeCount": sum(row["state"] == "complete" for row in rows)})
+            sources.append({**self._export(source), "totalCount": len(rows), "latestCount": sum(row["isLatest"] for row in rows), "pendingCount": sum(row["state"] == "pending" for row in rows), "failedCount": sum(row["state"] == "failed" for row in rows), "completeCount": sum(row["state"] == "complete" for row in rows), "skippedCount": sum(row["state"] == "skipped" for row in rows)})
         return {"schemaVersion": 1, "timestampFormat": "ISO-8601 UTC", "recoveredFromBackup": self.recovered_from_backup, "sources": sources, "totalItems": len(self._state["notices"]), "recentRuns": [self._export(run) for run in self._state["runs"][-20:]]}
 
     def export_items(self, source_id=None) -> list[dict]:
