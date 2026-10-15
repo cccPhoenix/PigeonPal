@@ -63,8 +63,8 @@ class LocalBackend:
                                   on_result=self.runtime.schedule_deadline)
         self.chat = ChatService(self.ai, self.runtime)
         self.engine = CrawlEngine(self.store, list(SOURCES), auth=self.site_auth, sleep=self._sleep,
-                                  client_factory=lambda host, protected, session: SlowClient(
-                                      host, protected, session, sleep=self._sleep),
+                                  client_factory=lambda host, protected, session, **options: SlowClient(
+                                      host, protected, session, sleep=self._sleep, **options),
                                   report=lambda message: print(message, flush=True))
         self.worker_error = None
         self.thread = None
@@ -131,9 +131,12 @@ class LocalBackend:
         items = []
         for row in rows[offset:offset + limit]:
             items.append({key: row[key] for key in ("id", "sourceId", "title", "url", "publishedAt", "state", "version", "contentHash", "lastChangedAt", "firstSeenAt")})
+            items[-1].update(fetchable=row.get("fetchable", True), qualityFlags=row.get("qualityFlags", []))
             analysis = self.ai.analysis(row)
             items[-1]["analysis"] = analysis
-            digest = hashlib.sha256(json.dumps(analysis.get("result"), sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+            visible = {key: items[-1][key] for key in ("title", "url", "publishedAt", "state", "fetchable", "qualityFlags")}
+            digest = hashlib.sha256(json.dumps({"metadata": visible, "result": analysis.get("result")},
+                                               sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
             items[-1]["revision"] = f"{row['version']}:{row['contentHash']}:{digest}"
         return {"items": items, "total": len(rows), "nextOffset": offset + limit if offset + limit < len(rows) else None}
 
@@ -204,10 +207,11 @@ class LocalBackend:
                 elif state == "auth_required":
                     state = "waiting"
             sources.append({
-                "id": source.id, "title": "云峰通知" if source.id == "yunfeng" else "信息技术中心",
+                "id": source.id, "title": source.title or source.id,
                 "url": source.url, "requiresAuth": source.requires_auth, "state": state,
                 "totalCount": saved.get("totalCount", 0), "completeCount": saved.get("completeCount", 0),
                 "pendingCount": saved.get("pendingCount", 0), "lastCheckedAt": saved.get("lastRunAt"),
+                "skippedCount": saved.get("skippedCount", 0),
                 "lastError": self.worker_error or saved.get("lastError"),
                 "nextCheckAt": saved.get("nextDueAt"), "everySeconds": 300,
             })

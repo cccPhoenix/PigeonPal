@@ -28,11 +28,12 @@ adapter = { id, channelId, fetch: async () => Item[] }
 Item = { id, title, url, publishedAt, kind?, eventAt?, eventEnd?, where?, summary? }
 ```
 
-- `localAdapters(client)` 读取云峰／ITC 的本机通知 API。`startFeed` 每五秒检查，避免轮询重叠。
-- 按 `id + revision` 识别正文或整理结果更新；消息按 `noticeId` 原位更新，避免重复追加同一通知。
+- `localAdapters(client)` 按 `LOCAL_CHANNELS` 注册表读取云峰、ITC、求是学院、本科生院的本机通知 API。`startFeed` 每五秒检查本机数据，避免轮询重叠；学校页面采集仍按 300 秒检查与同主机 15–30 秒间隔执行。
+- 按 `id + revision` 识别元信息、正文或整理结果更新；消息按 `noticeId` 原位更新，避免重复追加同一通知。
 - `noticeCopy(item)` 使用已校验摘要，暂无摘要时只提示收录信息；未知发布日期保留为空，不推测年份。
 - `kind`：`talk` 报告会、`deadline` 截止或开放时间、`club` 活动、`notice` 其他。
 - 用户通过「添加信息来源」建的频道带 `pending: true`，等对应的 adapter 写好后接上即可。
+- 通知 API 返回 `fetchable` 和 `qualityFlags`；跨站、直接附件等条目为 `state: skipped`，前端说明仅保留链接，来源卡显示 `skippedCount`。这些条目不进入正文队列和自动整理。
 
 真实抓取应该放在后端（定时任务加解析），前端的 `fetch()` 只调用自家 API，不在浏览器里直接爬网站。
 

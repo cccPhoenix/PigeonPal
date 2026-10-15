@@ -2,7 +2,7 @@ import { createStore } from './store.js'
 import { newId, pendingReminders } from './reminders.js'
 import { markHTML, setMarkState, startGaze } from './mark/index.js'
 import { createAIChat, GREETING } from './services/chat.js'
-import { startFeed, localAdapters, noticeCopy, eventPhrase, NOTICE_CATEGORIES } from './services/sources.js'
+import { startFeed, localAdapters, noticeCopy, eventPhrase, NOTICE_CATEGORIES, LOCAL_CHANNELS } from './services/sources.js'
 import { systemNotify } from './services/scheduler.js'
 import { createSidebar } from './ui/sidebar.js'
 import { createHeader } from './ui/header.js'
@@ -30,6 +30,7 @@ const $ = id => document.getElementById(id)
 const app = $('app')
 const identityClient = createAuthClient()
 const sourceStates = new Map()
+const localSourceIds = new Set(LOCAL_CHANNELS.map(channel => channel.sourceId))
 let aiStatus = null
 let sourceStatusError = false
 let sourceRefresh = null
@@ -39,7 +40,7 @@ async function refreshSourceStates() {
   sourceRefresh = Promise.all([identityClient.sources(), apiClient.status()]).then(([sources, ai]) => {
     aiStatus = ai
     sourceStatusError = false
-    for (const source of sources) if (source && ['yunfeng', 'itc'].includes(source.id)) sourceStates.set(source.id, source)
+    for (const source of sources) if (source && localSourceIds.has(source.id)) sourceStates.set(source.id, source)
   }).catch(() => { sourceStatusError = true }).finally(() => { sourceRefresh = null })
   return sourceRefresh
 }
@@ -253,8 +254,8 @@ ${detail ? `<details class="notice-body"><summary>网页正文</summary><div>${e
 ${detail?.attachments?.length ? `<div class="note">附件：${detail.attachments.map(attachment => `<a href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener">${escapeHtml(attachment.name || '附件')}</a>`).join('、')}</div>` : ''}
 <div class="btns">${item.url ? `<a class="btn primary" href="${escapeHtml(item.url)}" target="_blank" rel="noopener" style="display:inline-grid;place-items:center;text-decoration:none">打开原网页</a>` : '<span class="muted" style="margin-right:auto;align-self:center">示例来源，没有原网页</span>'}<button class="btn" data-x="close">好的</button></div>`, { opener })
   box.querySelector('[data-x="close"]').addEventListener('click', closeOverlay)
-  if (item.real) {
-    box.classList.add('notice-dialog')
+  if (item.real) box.classList.add('notice-dialog')
+  if (item.real && detail?.state === 'complete' && typeof detail.content === 'string' && detail.content.trim()) {
     const retry = document.createElement('button')
     retry.className = 'btn'
     retry.textContent = '重新整理'
@@ -328,7 +329,8 @@ ${c.sourceId ? '<dl class="kv"><dt>采集状态</dt><dd data-source-state></dd><
         pop.querySelector('[data-source-state]').textContent = sourceStateLabel(c.sourceId)
         const count = Number.isSafeInteger(source?.totalCount) ? source.totalCount : null
         const complete = Number.isSafeInteger(source?.completeCount) ? source.completeCount : null
-        pop.querySelector('[data-source-count]').textContent = count === null ? '—' : `${count} 条${complete === null ? '' : ` · ${complete} 篇正文`}`
+        const skipped = Number.isSafeInteger(source?.skippedCount) ? source.skippedCount : 0
+        pop.querySelector('[data-source-count]').textContent = count === null ? '—' : `${count} 条${complete === null ? '' : ` · ${complete} 篇正文`}${skipped ? ` · ${skipped} 条仅链接` : ''}`
         const checked = new Date(source?.lastCheckedAt)
         pop.querySelector('[data-source-checked]').textContent = source?.lastCheckedAt && Number.isFinite(checked.getTime()) ? checked.toLocaleString('zh-CN', { hour12: false }) : '—'
         pop.querySelector('[data-ai-state]').textContent = !aiStatus?.configured ? '等待配置 API' : aiStatus.error
