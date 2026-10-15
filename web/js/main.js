@@ -3,6 +3,7 @@ import { newId, pendingReminders } from './reminders.js'
 import { markHTML, setMarkState, startGaze } from './mark/index.js'
 import { createAIChat, GREETING } from './services/chat.js'
 import { startFeed, localAdapters, noticeCopy, eventPhrase, NOTICE_CATEGORIES, LOCAL_CHANNELS } from './services/sources.js'
+import { analysisFields, decisionCopy } from './services/notice-summary.js'
 import { systemNotify } from './services/scheduler.js'
 import { createSidebar } from './ui/sidebar.js'
 import { createHeader } from './ui/header.js'
@@ -240,8 +241,10 @@ async function openNotice(m, opener) {
   if (item.real && item.noticeId) {
     try { detail = await apiClient.notice(item.noticeId) } catch (error) { toast(apiErrorText(error)); return }
   }
-  const box = dialog(`<h3>${escapeHtml(item.title)}</h3>
+  const current = detail ? { ...item, ...analysisFields(detail.analysis) } : item
+  const box = dialog(`<h3>${item.real ? '通知详情' : escapeHtml(item.title)}</h3>
 <p>${escapeHtml(c.emoji)} ${escapeHtml(c.title)} · ${escapeHtml(c.site)}</p>
+${item.real ? `<div class="note">${escapeHtml(decisionCopy(current)).replace(/\n/g, '<br>')}</div><p class="muted">${escapeHtml(current.notes?.join('；') || '')}</p><p>原标题：${escapeHtml(detail?.title || item.title)}</p>` : `
 <div class="card-meta" style="margin-bottom:12px">${item.eventAt ? `<div>${icon('clock', 15)}<span>${escapeHtml(eventPhrase(item.eventAt))}${item.eventEnd ? ` – ${clock(item.eventEnd)}` : ''}</span></div>` : ''}${item.where ? `<div>${icon('pin', 15)}<span>${escapeHtml(item.where)}</span></div>` : ''}</div>
 <p class="note">${escapeHtml(item.summary ?? '')}</p>
 ${NOTICE_CATEGORIES[item.category] ? `<p>分类：${escapeHtml(NOTICE_CATEGORIES[item.category])}</p>` : ''}
@@ -249,7 +252,7 @@ ${!item.eventAt && item.eventLabel ? `<p>活动日期：${escapeHtml(item.eventL
 ${item.deadlineAt ? `<p>截止日期／时间：${escapeHtml(item.deadlineAt.replace('T', ' '))}</p>` : ''}
 ${item.audience?.length ? `<p>适用对象：${escapeHtml(item.audience.join('、'))}</p>` : ''}
 ${item.todos?.length ? `<div class="note">${item.todos.map(todo => `<div>• ${escapeHtml(todo.text)}${todo.dueAt ? `（${escapeHtml(todo.dueAt)}）` : ''}</div>`).join('')}</div>` : ''}
-${item.notes?.length ? `<p class="muted">${escapeHtml(item.notes.join('；'))}</p>` : ''}
+${item.notes?.length ? `<p class="muted">${escapeHtml(item.notes.join('；'))}</p>` : ''}`}
 ${detail ? `<details class="notice-body"><summary>网页正文</summary><div>${escapeHtml(detail.content || '本机暂时没有正文，可以打开原网页查看。').replace(/\n/g, '<br>')}</div></details>` : ''}
 ${detail?.attachments?.length ? `<div class="note">附件：${detail.attachments.map(attachment => `<a href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener">${escapeHtml(attachment.name || '附件')}</a>`).join('、')}</div>` : ''}
 <div class="btns">${item.url ? `<a class="btn primary" href="${escapeHtml(item.url)}" target="_blank" rel="noopener" style="display:inline-grid;place-items:center;text-decoration:none">打开原网页</a>` : '<span class="muted" style="margin-right:auto;align-self:center">示例来源，没有原网页</span>'}<button class="btn" data-x="close">好的</button></div>`, { opener })

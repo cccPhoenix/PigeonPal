@@ -135,7 +135,8 @@ class LocalBackend:
             analysis = self.ai.analysis(row)
             items[-1]["analysis"] = analysis
             visible = {key: items[-1][key] for key in ("title", "url", "publishedAt", "state", "fetchable", "qualityFlags")}
-            digest = hashlib.sha256(json.dumps({"metadata": visible, "result": analysis.get("result")},
+            digest = hashlib.sha256(json.dumps({"metadata": visible, "result": analysis.get("result"),
+                                               "analysisState": analysis.get("state"), "analysisError": analysis.get("error")},
                                                sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
             items[-1]["revision"] = f"{row['version']}:{row['contentHash']}:{digest}"
         return {"items": items, "total": len(rows), "nextOffset": offset + limit if offset + limit < len(rows) else None}

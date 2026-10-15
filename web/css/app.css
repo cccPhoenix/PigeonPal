@@ -176,6 +176,12 @@ input, textarea, select { font: inherit; color: inherit; }
 @media (hover: none) { .line:hover .tools { opacity: 0; pointer-events: none; } .line.show-tools .tools { opacity: 1; pointer-events: auto; } .tools time { display: none; } }
 
 /* notice: the bot's line + a link card, like a friend sharing a link */
+.notice-row .stack { width: 580px; }
+.notice-row .line { width: 100%; flex-wrap: wrap; gap: 0; }
+.notice-row .bubble { width: 100%; }
+.notice-row .tools { margin-left: auto; }
+.card details { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.card summary { cursor: pointer; }
 .card {
   width: min(360px, 100%); margin-top: 4px;
   background: var(--card); border-radius: 18px;

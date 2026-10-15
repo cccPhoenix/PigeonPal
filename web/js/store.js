@@ -4,6 +4,7 @@
 import { newId } from './reminders.js'
 import { hasLook } from './mark/looks.js'
 import { LOCAL_CHANNELS } from './services/sources.js'
+import { DECISION_FIELDS, decisionCopy } from './services/notice-summary.js'
 
 export const STORAGE_KEY = 'pigeonpal.v1'
 const KINDS = ['text', 'notice', 'reminder']
@@ -68,6 +69,9 @@ export function hydrate(raw) {
         ...(typeof m.quoteId === 'string' ? { quoteId: m.quoteId } : {}),
         ...(typeof m.reminderId === 'string' ? { reminderId: m.reminderId } : {}),
         ...(m.kind === 'notice' && m.item && typeof m.item === 'object' ? { item: cleanItem(m.item) } : {}) }))
+    for (const message of fresh.messages[channel.id]) {
+      if (message.kind === 'notice' && message.item?.real) message.text = decisionCopy(message.item)
+    }
     const unread = stored.unread?.[channel.id]
     if (Number.isSafeInteger(unread) && unread > 0) fresh.unread[channel.id] = unread
   }
@@ -83,6 +87,8 @@ export function hydrate(raw) {
 function cleanItem(item) {
   const out = {}
   for (const key of ['id', 'noticeId', 'sourceId', 'revision', 'kind', 'category', 'title', 'where', 'summary', 'url', 'deadlineAt', 'eventLabel', 'analysisState', 'publishedDate']) if (typeof item[key] === 'string') out[key] = item[key].slice(0, 1000)
+  for (const key of DECISION_FIELDS) if (typeof item[key] === 'string') out[key] = item[key].slice(0, 600)
+  if (typeof item.bodyStatus === 'string') out.bodyStatus = item.bodyStatus.slice(0, 600)
   if (item.real === true) out.real = true
   if (Number.isSafeInteger(item.contentVersion)) out.contentVersion = item.contentVersion
   for (const key of ['audience', 'notes']) if (Array.isArray(item[key])) out[key] = item[key].filter(value => typeof value === 'string').slice(0, 20).map(value => value.slice(0, 300))

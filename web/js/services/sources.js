@@ -10,6 +10,7 @@
 // Structured AI results come from the local service; legacy demo helpers remain below.
 
 import { clock, dayLabel } from '../ui/format.js'
+import { analysisFields, decisionCopy } from './notice-summary.js'
 
 export const NOTICE_CATEGORIES = {
   academic: '学术报告', teaching: '教学教务', activity: '校园活动',
@@ -51,7 +52,7 @@ export function eventPhrase(at, now = Date.now()) {
 }
 
 export function noticeCopy(item, now = Date.now()) {
-  if (item.real) return item.summary || `🔔 ${item.title}\n可以点「查看原文」了解详情。`
+  if (item.real) return decisionCopy(item)
   const day = item.eventAt ? eventPhrase(item.eventAt, now) : ''
   switch (item.kind) {
     case 'talk': return `🎤 ${day} 有一场报告会！\n{nickname}，在${item.where}，感兴趣可以去听听～`
@@ -74,7 +75,7 @@ export function localAdapters(client) {
         offset = data.nextOffset
       } while (Number.isSafeInteger(offset) && offset > 0)
       return rows.map(row => {
-        const result = row.analysis?.result || null
+        const result = row.analysis?.state === 'ready' ? row.analysis.result : null
         const linkOnly = row.state === 'skipped' || row.fetchable === false
         const flags = Array.isArray(row.qualityFlags) ? row.qualityFlags : []
         const linkSummary = !linkOnly ? '' : flags.includes('external_link')
@@ -91,11 +92,11 @@ export function localAdapters(client) {
           receivedAt: Date.parse(row.lastChangedAt || row.firstSeenAt),
           kind: ({ academic: 'talk', activity: 'club', deadline: 'deadline' })[result?.category] || 'notice',
           category: result?.category || '',
-          summary: linkSummary || result?.summary || '', where: result?.location || '',
           eventAt: exactTime(result?.eventAt), eventEnd: exactTime(result?.eventEnd),
           deadlineAt: result?.deadlineAt || null, eventLabel: result?.eventAt || null,
-          audience: result?.audience || [], todos: result?.todos || [], notes: result?.notes || [],
-          analysisState: row.analysis?.state || 'pending',
+          todos: result?.todos || [],
+          ...analysisFields(row.analysis),
+          ...(linkOnly ? { analysisState: 'waiting_body', bodyStatus: linkSummary, summary: linkSummary } : {}),
         }
       })
     },
