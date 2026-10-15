@@ -138,6 +138,11 @@ input, textarea, select { font: inherit; color: inherit; }
 .activity-avatar { display: inline-flex; flex: none; align-items: center; }
 .activity-name { overflow-wrap: anywhere; }
 .activity-copy { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+.activity-live-copy { display: none; }
+.activity-row[data-waking] .activity-live-copy { display: inline; }
+.activity-row[data-waking] .activity-history-copy { display: none; }
+.activity-row[data-activity="handoff"] .activity-content { width: fit-content; margin: 0 auto; padding: 5px 12px; border-radius: 20px; background: var(--accent-soft); }
+.activity-row[data-activity="handoff"] .activity-name { color: var(--ink-2); }
 .activity-row[data-activity="failed"], .activity-row[data-activity="unknown"] { color: var(--ink-2); }
 .activity-enter { animation: activity-in .28s var(--ease-out) both; }
 .activity-row.flash { animation: activity-highlight 1.2s ease-out; border-radius: 10px; }

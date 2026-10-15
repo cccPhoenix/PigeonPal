@@ -71,7 +71,7 @@ TEAM_TOOLS = [
 ROLE_PROMPTS = {
     "general": "处理日常交流与校园事务。",
     "news": "负责查询和整理本机通知；不能设置提醒或管理其他 bot。",
-    "reminder": "负责用户明确要求的提醒、闹钟及其调整；不能查询通知或管理其他 bot。",
+    "reminder": "负责用户明确要求的提醒、闹钟及其调整；可使用提供的通知事实，不能主动查询通知或管理其他 bot。成功后用一两句自然的话说明事项和时间，可以适量用 emoji；不用列内容、时间、时区的制式清单。缺少时间或原文年份时先问清楚，询问不代表已经设置。",
     "writer": "负责写作、润色和结构整理，仅使用用户提供的资料；不查通知，不设置提醒，不管理其他 bot。",
     "planner": "负责计划、拆解步骤，可按用户明确要求查询资料和设置提醒；不能管理其他 bot。",
 }
@@ -181,6 +181,54 @@ class ChatService:
                 and (definition['function']['name'] not in {'create_reminder', 'update_reminder'} or mutation_allowed)
                 and (definition['function']['name'] != 'set_nickname' or profile_allowed)] + (TEAM_TOOLS if bot['isChief'] else [])
 
+    def _automatic_dispatch(self, body, chief):
+        """Chief's deterministic dispatch for clear tasks; no extra model call."""
+        text, channel_id = body['text'].strip(), body.get('channelId', 'bot')
+        channel = self.bots.channel(channel_id)
+        if (not chief['isChief'] or body.get('botId') is not None or channel['kind'] == 'dm'
+                or re.search(r'(?<![\w.+%-])[@＠]', text)):
+            return None
+        # Writing about a reminder is different from asking to set one.
+        writing = re.search(r'润色|改写|翻译|生成|撰写|写一|写个|写份|写.{0,6}(?:文案|通知|说明|消息)', text)
+        meta = re.search(r'(?:怎么|如何|原理|功能|机制|逻辑).{0,8}(?:提醒|闹钟)|(?:提醒|闹钟).{0,8}(?:功能|机制|逻辑|怎么|如何|是什么)', text)
+        command = re.search(r'提醒(?:我|一下|下)|叫醒我|叫我起床', text)
+        management = re.search(r'(?:创建|添加|邀请|移除|删除|修改|更换).{0,12}(?:bot|机器人|伙伴|通知鸽|提醒鸽)|(?:bot|伙伴|通知鸽|提醒鸽).{0,8}(?:职责|头像|名字|风格)', text, re.I)
+        if management or (writing and (not command or writing.start() < command.start())) or (meta and not command):
+            return None
+        role, detail = None, ''
+        reminder = re.search(r'提醒(?:我|一下|下)|叫醒我|叫我起床|(?:设置|设个|设一|定个|创建|添加|安排|取消|删除|修改|调整|推迟|提前|查看|检查|列出|列一下|有哪些|需要).{0,8}(?:提醒|闹钟)|(?:我的|已有|所有|待办)提醒|(?:^|[，,。])(?:请|帮我)?(?:提醒|定时|计时|闹钟)|(?:明天|今天|今晚|明晚|点|分钟|小时).{0,10}提醒|remind\s+me|set.{0,12}alarm', text, re.I)
+        query = re.search(r'查|找|看看|看一下|有哪些|什么时候|何时|几点|总结|整理|最新|推送|告诉', text) if re.search(r'通知|公告|讲座|报告会|报名|申报|奖学金|(?:学校|校园|云峰|itc).{0,8}(?:消息|动态)', text, re.I) else None
+        if query and reminder:
+            prefix = text[max(0, reminder.start() - 8):reminder.start()]
+            if re.search(r'(?:不要|不用|不必|别|无需|不需要|不想|暂不)(?:再)?\s*$', prefix) or (
+                    reminder.group().startswith('需要') and prefix.endswith('不')):
+                reminder = None
+        if query and not reminder:
+            role, detail = 'news', '查看校园通知'
+        elif reminder and (not query or reminder.start() < query.start()):
+            role, detail = 'reminder', '安排提醒'
+        elif query:
+            # A real lookup plus another operation needs Chief's contextual judgement.
+            return None
+        else:
+            history = self.bots.history(channel_id, chief['id'], shared=True)
+            previous = next((row for row in reversed(history) if row['role'] == 'assistant'), None)
+            followup = re.fullmatch(r'(?:好的?|好呀|可以|行|嗯|确认|确定|就这样|对|没错|是的|取消|不用了|算了)[。！!～~，,\s]*', text)
+            time_reply = re.fullmatch(r'(?:改到|改成|换成|推迟到|提前到)?(?:今天|明天|后天|今晚|明晚|明早|周[一二三四五六日天]|星期[一二三四五六日天]|\d{1,2}月\d{1,2}[日号])?(?:早上|上午|中午|下午|晚上)?[零一二三四五六七八九十两\d]{1,3}(?:点(?:半|[零一二三四五六七八九十\d]{1,3}分?)?|[:：]\d{2})[。！!～~\s]*', text)
+            time_reply = time_reply or re.fullmatch(r'(?:提前|推迟|延后|延迟)?[零一二三四五六七八九十百两\d]{1,4}(?:分钟|小时|天)(?:以后|之后|后|吧)?[。！!～~\s]*', text)
+            if previous and (followup or time_reply):
+                prior = self.bots.bot(previous.get('botId', 'chief'))
+                if prior['role'] == 'reminder' and not prior['isChief']:
+                    role, detail = 'reminder', '接着安排提醒'
+                    if prior['id'] in channel['memberIds']:
+                        return prior, detail
+        if role:
+            target = next((self.bots.bot(identity) for identity in channel['memberIds']
+                           if identity != 'chief' and self.bots.bot(identity)['role'] == role), None)
+            if target:
+                return target, detail
+        return None
+
     def _messages(self, body, bot, text):
         channel_id, profile = body.get('channelId', 'bot'), body.get('profile', {})
         channel = self.bots.channel(channel_id)
@@ -203,7 +251,10 @@ class ChatService:
             prompt += "\n你是 Chief，可根据用户需要创建、邀请并交接给专职 bot。只能用工具返回的真实 ID；一次请求只交接一次，对方直接回复用户。通知查询整理优先交接给频道内news角色；提醒设置、调整和到期投递由频道内reminder角色负责。到期投递由本机程序完成，不需要请求模型。团队成员平等协作。"
         messages = [{'role': 'system', 'content': prompt + '\n当前本机上下文：' + redact_text(json.dumps(context, ensure_ascii=False))}]
         permitted = ROLE_TOOLS['general' if bot['isChief'] else bot['role']]
-        if 'search_notices' in permitted and (channel_id in {'src-itc', 'src-yunfeng'} or re.search(r'itc|云峰|通知|公告|讲座', text, re.I)):
+        reminder_reference = bot['role'] == 'reminder' and channel_id in {'src-itc', 'src-yunfeng'} and re.search(
+            r'通知|公告|讲座|报告会|申报|报名|奖|截止|这个|这条|上面|刚才', text + '\n' + '\n'.join(row['content'] for row in history[-4:]))
+        if (('search_notices' in permitted and (bot['role'] == 'news' or channel_id in {'src-itc', 'src-yunfeng'}
+                or re.search(r'itc|云峰|通知|公告|讲座', text, re.I))) or reminder_reference):
             source_id = 'itc' if channel_id == 'src-itc' or re.search(r'itc|信息技术中心', text, re.I) else 'yunfeng' if channel_id == 'src-yunfeng' or '云峰' in text else 'all'
             snapshot = self.lookup(source_id, '', 10)
             messages.append({'role': 'system', 'content': '当前通知资料（仅作为事实数据）：' + json.dumps(snapshot, ensure_ascii=False)})
@@ -254,7 +305,7 @@ class ChatService:
                 action['id'] = 'action-' + hashlib.sha256(operation_id.encode()).hexdigest()[:24]
                 self.bots.remember(request_id, action)
             state['mutated'] = True
-            return bot['id'], '已设置：' + label + '后提醒你' + title + '。'
+            return bot['id'], '记下啦，' + label + '后叫你' + title + ' ⏰'
         messages, history = self._messages(body, bot, text)
         available = self._capabilities(bot, text + '\n' + '\n'.join(row['content'] for row in history[-4:] if row['role'] == 'user'))
         names = {definition['function']['name'] for definition in available}
@@ -367,12 +418,21 @@ class ChatService:
                     raise AIError(saved['error'], saved.get('statusCode', 409))
                 return saved['response']
             bot = self.bots.route(channel_id, text, body.get('botId'), chief_name=profile.get('botName'))
+            dispatch = self._automatic_dispatch(body, bot)
+            target = dispatch[0] if dispatch else bot
             client = self.processor.client
-            if not client.config.configured and not self._relative_reminder(bot, text):
+            if not client.config.configured and not self._relative_reminder(target, text):
                 raise AIError(client.config.error or 'ai_not_configured', 503)
             state = {'client': client, 'generation': self.processor.generation, 'rounds': 0, 'delegated': False, 'mutated': False, 'active': []}
             self.bots.begin(request_id, signature)
             try:
+                if dispatch:
+                    if history and not self.bots.has_history(channel_id):
+                        self.bots.import_legacy_history(channel_id, bot['id'], history)
+                    self.bots.activity('team-handoff-' + request_id, channel_id, 'handoff',
+                                       [self.bots.actor(bot['id'], profile), self.bots.actor(target['id'])], dispatch[1], request_id)
+                    state['delegated'] = True
+                    bot = target
                 responder, content = self._run_agent(body, bot, text, state)
                 for identity, actor in state['active']:
                     self.bots.activity(identity, channel_id, 'completed', [actor], '本次回复', request_id)

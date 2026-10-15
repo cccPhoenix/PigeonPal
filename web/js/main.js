@@ -117,6 +117,9 @@ function updateComposerChannel(channel = store.channel(active)) {
 store.on('message', m => {
   sidebar.update(m.channelId)
   transcript.append(m)
+  if (m.channelId === active && pending.has(active) && m.activity?.type === 'handoff') {
+    transcript.showTyping(m.activity.actors[1].id)
+  }
   if (m.channelId === active && document.visibilityState === 'visible') store.markRead(m.channelId)
 })
 store.on('unread', id => sidebar.update(id))

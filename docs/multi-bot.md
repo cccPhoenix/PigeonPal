@@ -15,6 +15,8 @@
 - 前端本机保存每个 bot 的形象覆盖配置（内置分层 SVG 或上传图片），按稳定 bot ID 解析，在气泡、侧栏、成员展示和协作提示中一致更新。Chief 复用原 profile 的名字和形象；不重置旧聊天、昵称、提醒或密钥配置。
 - Chief 可调用受控工具创建 bot、把 bot 加入当前频道、向频道中的专职 bot 委派任务。用户也能通过界面配置或 @。不赋予任意代码、文件或网站访问能力。
 - 同一请求默认仅一位回应；有 @ 按目标路由，否则私聊对应 bot／频道 Chief／首位成员回应。最多一个直接交接、共三轮工具调用，避免递归讨论。专职 bot 不能再委派或创建其他 bot。
+- Chief 收到未 @ 的明确提醒事项或通知查询，会先按本地意图规则交接给频道内的 reminder／news 成员，由子 bot 最终回答，无需先让 Chief 调用一次模型。提醒过程中的简短确认和补充时间继续交给刚才的提醒角色。明确 @／botId 和私聊优先；写作、功能说明、角色管理和难以明确分类的任务保留给 Chief 判断。角色不在频道时不擅自加人。
+- 来源频道中的提醒事项可使用当前来源的有限通知事实快照，仍不授予提醒角色通知查询工具；找不到事项或日期不确定时追问。资料快照来自本机已抓取的数据，不增加抓取或模型请求。
 - 成功事件来自实际配置保存、成员加入、模型有效回复或提醒持久化。模型文字不产生成功状态。重试按 requestId 幂等；部分失败保留已保存操作并标明失败。任务中断恢复显示待确认，不虚构完成。
 - 既有爬虫仍统一运行。通知作者按频道中 news 角色成员选择，否则 Chief；不让每个 bot 重复抓同一网站。
 
@@ -32,6 +34,8 @@ Channel: `{ id, kind: 'group'|'dm'|'source'|'bot', title, memberIds, botId? }`�
 - `GET /api/bots/events?after=N` → `{ events, cursor }`，独立于提醒 eventCursor。
 
 Team event: `{ id, sequence, channelId, at, kind:'activity'|'text', activity?, text?, botId? }`。activity 沿用 `{ type, actors:[{id,name,look}], detail? }`，同 id 的 processing/completed/failed 更新同一行。joined/handoff 只在操作实际成立后写入。
+
+界面不再显示普通回复的 processing／completed「本次回复」状态，底层回执仍保留以防重复执行；失败／中断仍可见。真实交接短暂显示「Chief 正在唤醒 子 bot」和双方形象动作，随后收为静态交接记录。实际提醒保存确认保留具体时间，不把模型的追问标为提醒已设置。
 
 `POST /api/chat` 增加 `botId?`，仅允许当前频道成员。响应继续 `{ events }`，message/action/activity 事件可以带 `botId`，不允许模型伪造。真实任务处理和交接事件写 team event 流，前端边轮询边显示；bot 回复同样写 team text 事件并返回稳定 id，以便响应和轮询去重。
 

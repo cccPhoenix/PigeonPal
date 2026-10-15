@@ -3,6 +3,7 @@ import { icon } from './icons.js'
 import { escapeHtml, richText, plain, clock, whenLabel } from './format.js'
 import { eventPhrase, NOTICE_CATEGORIES } from '../services/sources.js'
 import { activityHTML, animateActivity } from './activity.js'
+import { visibleActivity } from '../services/activity.js'
 
 const GROUP_GAP = 5 * 60_000
 const DIVIDER_GAP = 30 * 60_000
@@ -96,7 +97,7 @@ ${user ? '' : `<div class="gutter">${first ? mark({ botId: m.botId, live, state:
     typingRow = null
     unseen = 0
     jump.hidden = true
-    const list = store.state.messages[id] ?? []
+    const list = (store.state.messages[id] ?? []).filter(m => m.kind !== 'activity' || visibleActivity(m.activity))
     let html = ''
     let prev = null
     list.forEach(m => {
@@ -115,6 +116,8 @@ ${user ? '' : `<div class="gutter">${first ? mark({ botId: m.botId, live, state:
 
   function append(m) {
     if (m.channelId !== channelId || !inner) return
+    settleHandoff(m)
+    if (m.kind === 'activity' && !visibleActivity(m.activity)) return
     inner.querySelector('.empty')?.remove()
     const stick = nearBottom() || m.role === 'user'
     const rows = inner.querySelectorAll('.row, .activity-row')
@@ -215,6 +218,7 @@ ${user ? '' : `<div class="gutter">${first ? mark({ botId: m.botId, live, state:
       const message = store.message(row.dataset.id)
       if (!message) continue
       const fresh = toNode(activityHTML(message, profile(), { resolveActor })).firstElementChild
+      if (!fresh) { row.remove(); continue }
       row.querySelector('.activity-content')?.replaceWith(fresh.firstElementChild)
       clearTimeout(row._activityTimer)
       row.classList.remove('activity-enter')
@@ -233,15 +237,28 @@ ${user ? '' : `<div class="gutter">${first ? mark({ botId: m.botId, live, state:
   }
 
   function refreshActivity(message) {
+    settleHandoff(message)
     const row = inner?.querySelector(`.activity-row[data-id="${CSS.escape(message.id)}"]`)
-    if (!row) return
+    if (!row) { append(message); return }
     const stick = nearBottom()
     const changed = row.dataset.activity !== message.activity.type
     const fresh = toNode(activityHTML(message, profile(), { fresh: changed, resolveActor })).firstElementChild
     clearTimeout(row._activityTimer)
+    if (!fresh) { row.remove(); return }
     row.replaceWith(fresh)
     if (changed) animateActivity(fresh)
     if (stick) requestAnimationFrame(() => toBottom())
+  }
+
+  function settleHandoff(message) {
+    if (message.kind !== 'activity' || !['completed', 'failed', 'unknown'].includes(message.activity?.type)
+        || !message.id.startsWith('team-task-')) return
+    const target = message.activity.actors[0].id
+    if (!message.id.endsWith('-' + target)) return
+    const request = message.id.slice('team-task-'.length, -(target.length + 1))
+    const row = inner?.querySelector(`.activity-row[data-id="${CSS.escape('team-handoff-' + request)}"]`)
+    // Keep the short avatar gesture, but stop claiming an already-finished task is waking.
+    if (row) delete row.dataset.waking
   }
 
   function showJump() {

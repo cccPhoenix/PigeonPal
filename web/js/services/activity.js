@@ -23,19 +23,22 @@ export function chiefActor(profile) {
   return { id: 'chief', name: profile.botName, look: profile.look }
 }
 
+// Lifecycle receipts still protect retries, but ordinary bubbles need no extra announcement.
+export const visibleActivity = activity => !(activity?.detail === '本次回复' && ['processing', 'completed'].includes(activity.type))
+
 // Parts keep names/avatars together while the same wording is used in storage/search.
 export function activityParts(activity) {
   const [actor, target] = activity.actors
   const detail = activity.detail ? ` · ${activity.detail}` : ''
   switch (activity.type) {
     case 'joined': return [actor, ' 加入了频道']
-    case 'handoff': return [actor, ' 将任务交给了 ', target, detail]
+    case 'handoff': return [actor, ' 叫来了 ', target, detail]
     case 'processing': return [actor, activity.detail === '本次回复' ? ' 正在等待回复…' : ` 正在处理${detail}…`]
     case 'completed': return [actor, ` 已完成${detail}`]
     case 'failed': return [actor, ' 请求未完成']
     case 'unknown': return [actor, ' 上次请求状态待确认']
-    case 'reminder_saved': return [actor, ` 已设置提醒${detail}`]
-    case 'reminder_updated': return [actor, ` 已更新提醒${detail}`]
+    case 'reminder_saved': return [actor, ` 记住啦${detail ? `${detail} ⏰` : ''}`]
+    case 'reminder_updated': return [actor, ` 提醒已调整${detail}`]
     case 'reminder_done': return [actor, ` 已完成提醒事项${detail}`]
     case 'reminder_cancelled': return [actor, ` 已取消提醒${detail}`]
     default: return []

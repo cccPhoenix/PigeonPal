@@ -110,3 +110,22 @@ test('persisted forged system records cannot become valid activity or ordinary c
     { ...state.messages.bot[0], id: 'broken', activity: { type: 'handoff', actors: [] } })
   assert.deepEqual(hydrate(state).messages.bot.map(row => row.id), ['valid'])
 })
+
+test('generic reply lifecycle remains recorded but does not add redundant visible notices', () => {
+  assert.equal(activityHTML(event('completed'), { botName: 'Alex', look: 'pigeon' }), '')
+  assert.equal(activityHTML(event('processing'), { botName: 'Alex', look: 'pigeon' }), '')
+  assert.ok(activityHTML(event('failed'), { botName: 'Alex', look: 'pigeon' }).includes('请求未完成'))
+})
+
+test('handoff reveals the actual chief and target with a brief wake-up state, history stays still', () => {
+  const message = { id: 'dispatch-one', activity: { type: 'handoff', actors: [actors[0],
+    { id: 'bot-defaultreminder', name: '提醒鸽', look: 'courier' }], detail: '安排提醒' } }
+  const fresh = activityHTML(message, { botName: 'Alex', look: 'pigeon' }, { fresh: true })
+  const history = activityHTML(message, { botName: 'Alex', look: 'pigeon' })
+  assert.ok(fresh.includes('正在唤醒'))
+  assert.ok(fresh.includes('Alex'))
+  assert.ok(fresh.includes('提醒鸽'))
+  assert.ok(fresh.includes('data-actor-index="1"'))
+  assert.ok(!history.includes('正在唤醒'))
+  assert.ok(!history.includes('data-fresh'))
+})

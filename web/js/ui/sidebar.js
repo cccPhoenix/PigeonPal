@@ -2,6 +2,7 @@ import { markHTML } from '../mark/index.js'
 import { botFace } from './team.js'
 import { icon } from './icons.js'
 import { escapeHtml, plain, shortTime } from './format.js'
+import { visibleActivity } from '../services/activity.js'
 
 // Sidebar, after DS Bot: brand row, the bot's card (your 1:1 chat), one row per source
 // channel, and two buttons at the foot. Rows update in place so nothing jumps.
@@ -11,7 +12,7 @@ export function createSidebar({ root, store, onSelect, onMe, onAddSource, onSear
   const look = () => { const p = store.state.profile; return { look: p.look, image: p.look === 'image' ? p.image : null, label: p.botName } }
 
   function preview(channelId) {
-    const last = store.lastMessage(channelId)
+    const last = (store.state.messages[channelId] || []).filter(m => m.kind !== 'activity' || visibleActivity(m.activity)).at(-1)
     if (!last) return { text: channelId === 'bot' ? '' : '暂时没有新消息', time: '' }
     const text = plain(last.kind === 'notice' && last.item?.title ? `${last.text.split('\n')[0]}` : last.text, store.state.profile)
     return { text: last.role === 'user' ? `你：${text}` : text, time: shortTime(last.at) }
