@@ -1,0 +1,39 @@
+[
+  {
+    "name": "评奖报名",
+    "title": "关于开展优秀学生奖学金申请工作的通知",
+    "content": "面向计算机学院二年级本科生，成绩排名前10%，评选名额5人。符合条件者可自愿申请。请于10月20日前提交材料，获评后可获奖学金5000元。",
+    "expected": {"noticeType":"评奖评优","participation":"自愿参加","summary":"优秀学生奖学金开放申请，符合条件者可提交材料。","audience":["计算机学院二年级本科生，成绩排名前10%，名额5人"],"eventTime":"原文未说明","deadlineText":"提交材料：10月20日前","benefits":"获评后可获奖学金5000元","location":null}
+  },
+  {
+    "name": "结果公示",
+    "title": "关于开展优秀学生评奖工作的通知",
+    "content": "评选已结束，现将拟获奖名单公示。公示期10月21日至10月23日，如有异议请于公示期内反馈。本次不再接受申请。",
+    "expected": {"noticeType":"公示","participation":"仅供知悉","summary":"拟获奖名单已公示，10月21日至23日可反馈异议，本次不再接受申请。","audience":["原文未说明"],"eventTime":"原文未说明","deadlineText":"原文未说明","benefits":"不涉及参与收益","location":null}
+  },
+  {
+    "name": "文体活动",
+    "title": "关于组织学生参加校运动会的通知",
+    "content": "全校本科生可自愿报名校运动会。活动于10月25日14:00至16:00在紫金港田径场举行，报名截止10月22日。",
+    "expected": {"noticeType":"文体活动","participation":"自愿参加","summary":"校运动会开放报名。","audience":["全校本科生"],"eventTime":"10月25日14:00至16:00","deadlineText":"报名：10月22日","benefits":"原文未说明具体参与收益","location":"紫金港田径场"}
+  },
+  {
+    "name": "普通新闻与回顾",
+    "title": "志愿活动招募通知",
+    "content": "本次志愿活动已于10月10日结束，30名志愿者完成社区服务，现场气氛热烈。本文为活动回顾，不再招募人员。",
+    "expected": {"noticeType":"新闻","participation":"仅供知悉","summary":"社区志愿活动已结束，本文回顾活动情况。","audience":["原文未说明"],"eventTime":"原文未说明","deadlineText":"原文未说明","benefits":"不涉及参与收益","location":null}
+  },
+  {
+    "name": "奖励有附加条件",
+    "title": "图书馆志愿者招募",
+    "content": "面向全校学生，限20人，自愿报名。11月2日9:00至12:00在图书馆服务，11月1日前报名。完成全部服务并审核通过后计入3小时志愿时长，未完成者不计入。",
+    "expected": {"noticeType":"志愿服务","participation":"自愿参加","summary":"图书馆招募20名志愿者。","audience":["全校学生，限20人"],"eventTime":"11月2日9:00至12:00","deadlineText":"报名：11月1日前","benefits":"完成全部服务并审核通过后计入3小时志愿时长，未完成者不计入","location":"图书馆"}
+  },
+  {
+    "name": "时间与受众不明确及附件未读",
+    "title": "学术讲座预告",
+    "content": "近期将举办人工智能讲座，具体安排另行通知。报名条件见附件。",
+    "attachmentNames": ["全校学生参加获得2学分_10月30日报名截止.pdf"],
+    "expected": {"noticeType":"讲座","participation":"原文未明确","summary":"人工智能讲座即将举办，具体安排另行通知。","audience":["原文未说明（报名条件见未读取的附件）"],"eventTime":"具体安排另行通知，实际起止时间原文未说明","deadlineText":"原文未说明","benefits":"原文未说明具体参与收益","location":null}
+  }
+]

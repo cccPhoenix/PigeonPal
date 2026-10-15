@@ -8,7 +8,7 @@ import re
 import threading
 
 from crawlers.storage import StorageError, _atomic_replace
-from .schema import AIError, validate_result
+from .schema import AIError, validate_cached_result
 
 
 def validate_cache(value):
@@ -35,7 +35,7 @@ def validate_cache(value):
         if row.get("processedAt") is not None and not isinstance(row["processedAt"], str):
             raise ValueError
         if row.get("result") is not None:
-            row["result"] = validate_result(row["result"])
+            row["result"] = validate_cached_result(row["result"])
         if row["state"] == "ready" and row.get("result") is None:
             raise ValueError
     return value

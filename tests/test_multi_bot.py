@@ -501,9 +501,11 @@ class MultiBotTests(unittest.TestCase):
         from notice_ai.bots import BotStore
         events = self.bots.events()['events']
         joined = [(row['channelId'], row['botId']) for row in events if row.get('activity', {}).get('type') == 'joined']
-        self.assertEqual(len(joined), 8)
+        self.assertEqual(len(joined), 14)
         self.assertIn(('bot', 'bot-defaultnews'), joined)
         self.assertIn(('src-itc', 'bot-defaultreminder'), joined)
+        self.assertIn(('src-qsxy', 'bot-defaultnews'), joined)
+        self.assertIn(('src-bksy', 'bot-defaultreminder'), joined)
         restored = BotStore(self.path / 'bots.json')
         self.assertEqual(restored.events()['events'], events)
 

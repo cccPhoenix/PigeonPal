@@ -10,6 +10,7 @@
 // Structured AI results come from the local service; legacy demo helpers remain below.
 
 import { clock, dayLabel } from '../ui/format.js'
+import { analysisFields, decisionCopy } from './notice-summary.js'
 
 export const NOTICE_CATEGORIES = {
   academic: '学术报告', teaching: '教学教务', activity: '校园活动',
@@ -51,7 +52,7 @@ export function eventPhrase(at, now = Date.now()) {
 }
 
 export function noticeCopy(item, now = Date.now()) {
-  if (item.real) return item.summary || `🔔 ${item.title}\n可以点「查看原文」了解详情。`
+  if (item.real) return decisionCopy(item)
   const day = item.eventAt ? eventPhrase(item.eventAt, now) : ''
   switch (item.kind) {
     case 'talk': return `🎤 ${day} 有一场报告会！\n{nickname}，在${item.where}，感兴趣可以去听听～`
@@ -74,7 +75,14 @@ export function localAdapters(client) {
         offset = data.nextOffset
       } while (Number.isSafeInteger(offset) && offset > 0)
       return rows.map(row => {
-        const result = row.analysis?.result || null
+        const result = row.analysis?.state === 'ready' ? row.analysis.result : null
+        const linkOnly = row.state === 'skipped' || row.fetchable === false
+        const flags = Array.isArray(row.qualityFlags) ? row.qualityFlags : []
+        const linkSummary = !linkOnly ? '' : flags.includes('external_link')
+          ? '这条通知链接到其他网站，当前只保存标题和原文链接，正文未采集。'
+          : flags.includes('attachment_only')
+            ? '这条通知直接指向附件，当前只保存标题和原文链接，附件未下载。'
+            : '这条通知当前仅保存标题和原文链接，正文未采集。'
         const exactTime = value => typeof value === 'string' && value.includes('T') && Number.isFinite(Date.parse(value)) ? Date.parse(value) : null
         return {
           id: row.id, noticeId: row.id, revision: row.revision, sourceId: row.sourceId, real: true,
@@ -84,11 +92,11 @@ export function localAdapters(client) {
           receivedAt: Date.parse(row.lastChangedAt || row.firstSeenAt),
           kind: ({ academic: 'talk', activity: 'club', deadline: 'deadline' })[result?.category] || 'notice',
           category: result?.category || '',
-          summary: result?.summary || '', where: result?.location || '',
           eventAt: exactTime(result?.eventAt), eventEnd: exactTime(result?.eventEnd),
           deadlineAt: result?.deadlineAt || null, eventLabel: result?.eventAt || null,
-          audience: result?.audience || [], todos: result?.todos || [], notes: result?.notes || [],
-          analysisState: row.analysis?.state || 'pending',
+          todos: result?.todos || [],
+          ...analysisFields(row.analysis),
+          ...(linkOnly ? { analysisState: 'waiting_body', bodyStatus: linkSummary, summary: linkSummary } : {}),
         }
       })
     },
@@ -99,6 +107,8 @@ export function localAdapters(client) {
 export const LOCAL_CHANNELS = [
   { id: 'src-yunfeng', sourceId: 'yunfeng', title: '云峰通知', emoji: '🏫', tint: '#eef3ee', site: 'yunfeng.zju.edu.cn', url: 'https://yunfeng.zju.edu.cn/on/53544/list.psp', every: '每 5 分钟', requiresAuth: false },
   { id: 'src-itc', sourceId: 'itc', title: 'ITC 通知', emoji: '💻', tint: '#eaf2ff', site: 'itc.zju.edu.cn', url: 'https://itc.zju.edu.cn/90618/list.psp', every: '每 5 分钟', requiresAuth: true },
+  { id: 'src-qsxy', sourceId: 'qsxy', title: '求是学院通知', emoji: '🎓', tint: '#fff1e5', site: 'qsxy.zju.edu.cn', url: 'http://qsxy.zju.edu.cn/30845/list.psp', every: '每 5 分钟', requiresAuth: false },
+  { id: 'src-bksy', sourceId: 'bksy', title: '本科生院通知', emoji: '📚', tint: '#f0ecff', site: 'bksy.zju.edu.cn', url: 'https://bksy.zju.edu.cn/28418/list.htm', every: '每 5 分钟', requiresAuth: false },
 ]
 
 // ---------------------------------------------------------------------------

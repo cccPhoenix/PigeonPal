@@ -38,12 +38,10 @@ export function createTranscript({ root, jump, store, onAction }) {
     const time = item.eventAt ? `${eventPhrase(item.eventAt)}${item.eventEnd ? ` – ${clock(item.eventEnd)}` : ''}` : ''
     return `<div class="card">
   <div class="card-src"><span>${escapeHtml(channel?.emoji ?? '🔔')}</span><span>${escapeHtml(channel?.title ?? '')}</span><span>·</span><span>${item.real ? (item.analysisState === 'ready' ? '已整理' : '原站通知') : '示例'}</span></div>
-  <div class="card-title">${escapeHtml(item.title ?? '')}</div>
-  ${NOTICE_CATEGORIES[item.category] ? `<div class="card-meta"><span>${escapeHtml(NOTICE_CATEGORIES[item.category])}</span></div>` : ''}
+  ${item.real ? `<details><summary>原标题</summary><div>${escapeHtml(item.title ?? '')}</div></details>` : `<div class="card-title">${escapeHtml(item.title ?? '')}</div>`}
+  ${!item.real && NOTICE_CATEGORIES[item.category] ? `<div class="card-meta"><span>${escapeHtml(NOTICE_CATEGORIES[item.category])}</span></div>` : ''}
   ${item.real && !item.publishedDate ? '<div class="card-meta"><span>原站发布日期待补齐</span></div>' : ''}
-  ${!item.eventAt && item.eventLabel ? `<div class="card-meta"><div>${icon('clock', 15)}<span>活动日期：${escapeHtml(item.eventLabel)}</span></div></div>` : ''}
-  ${item.deadlineAt ? `<div class="card-meta"><div>${icon('clock', 15)}<span>截止：${escapeHtml(item.deadlineAt.replace('T', ' '))}</span></div></div>` : ''}
-  ${time || item.where ? `<div class="card-meta">${time ? `<div>${icon('clock', 15)}<span>${escapeHtml(time)}</span></div>` : ''}${item.where ? `<div>${icon('pin', 15)}<span>${escapeHtml(item.where)}</span></div>` : ''}</div>` : ''}
+  ${!item.real && (time || item.where) ? `<div class="card-meta">${time ? `<div>${icon('clock', 15)}<span>${escapeHtml(time)}</span></div>` : ''}${item.where ? `<div>${icon('pin', 15)}<span>${escapeHtml(item.where)}</span></div>` : ''}</div>` : ''}
   <div class="pills">
     <button class="pill" data-act="open-notice" data-id="${escapeHtml(m.id)}">${icon('link', 15)}查看原文</button>
     ${item.real || item.eventAt && item.eventAt > Date.now() || reminder
@@ -68,7 +66,7 @@ export function createTranscript({ root, jump, store, onAction }) {
     if (m.kind === 'activity') return activityHTML(m, profile(), { fresh: Boolean(enter), resolveActor })
     const user = m.role === 'user'
     const quoted = m.quoteId && store.message(m.quoteId)
-    const cls = ['row', user ? 'user' : 'bot', first ? 'first' : '', enter ? 'enter' : ''].filter(Boolean).join(' ')
+    const cls = ['row', user ? 'user' : 'bot', m.kind === 'notice' && m.item?.real ? 'notice-row' : '', first ? 'first' : '', enter ? 'enter' : ''].filter(Boolean).join(' ')
     return `<div class="${cls}" data-id="${escapeHtml(m.id)}" data-role="${m.role}" data-bot-id="${escapeHtml(m.botId || 'chief')}">
 ${user ? '' : `<div class="gutter">${first ? mark({ botId: m.botId, live, state: 'idle' }) : ''}</div>`}
 <div class="stack">

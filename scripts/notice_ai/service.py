@@ -112,14 +112,18 @@ class NoticeProcessor:
             self._allowed(notice)
             fingerprint = self.fingerprint(notice)
         except AIError as error:
-            return {"state": "blocked" if error.status == 403 else "waiting_body", "error": error.code, "result": None}
+            state = "blocked" if error.status == 403 else "waiting_body" if error.code == "notice_body_unavailable" else "failed"
+            return {"state": state, "error": error.code, "result": None}
         if self.storage_error:
             return {"state": "failed", "error": self.storage_error, "result": None}
         record = self.cache.get(notice["id"])
         if record and record["fingerprint"] == fingerprint:
             if not self.config.configured and record["state"] != "ready":
                 return {"state": "unconfigured", "error": self.config.error, "result": None}
-            return {key: record.get(key) for key in ("state", "error", "result", "processedAt", "provider", "model")}
+            visible = {key: record.get(key) for key in ("state", "error", "result", "processedAt", "provider", "model")}
+            if record["state"] != "ready":
+                visible["result"] = None
+            return visible
         return {"state": "pending" if self.config.configured else "unconfigured",
                 "error": self.config.error, "result": None}
 

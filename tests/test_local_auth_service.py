@@ -310,7 +310,7 @@ class LocalAPITests(unittest.TestCase):
             self.assertEqual(finished["state"], "authenticated")
             status, sources = self.request("GET", "/api/sources", headers=self.headers())
             self.assertEqual(status, 200)
-            self.assertEqual(len(sources["sources"]), 2)
+            self.assertEqual({source["id"] for source in sources["sources"]}, {"yunfeng", "itc", "qsxy", "bksy"})
         for secret in ["fake-username", "fake-secret-password"]:
             self.assertNotIn(secret, output.getvalue())
             self.assertNotIn(secret, json.dumps([started, finished, sources]))
@@ -336,7 +336,8 @@ class LocalAPITests(unittest.TestCase):
         self.manager.start_login("fake-user", "fake-password", "request-account")
         await_phase(self.manager, "ready_to_bind")
         self.manager.confirm("request-account")
-        self.backend.engine.runtimes["yunfeng"].next_due = time.time() + 3600
+        for runtime in self.backend.engine.runtimes.values():
+            runtime.next_due = time.time() + 3600
         self.backend.engine.runtimes["itc"].next_due = 0
         # Reading auth/source APIs never bootstraps any target website.
         self.manager.status()

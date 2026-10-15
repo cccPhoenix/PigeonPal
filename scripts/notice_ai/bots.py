@@ -8,6 +8,7 @@ import time
 import uuid
 
 from crawlers.storage import StorageError, _atomic_replace
+from crawlers.sources import SOURCES
 from .runtime import valid_channel
 from .schema import AIError, redact_text
 
@@ -55,7 +56,29 @@ class BotStore:
                 if damaged:
                     raise StorageError('bots_state_invalid')
         self._seed_defaults()
+        self._seed_sources()
         self._recover()
+
+    def _seed_sources(self):
+        # A new crawler source needs a durable channel before AI/DDL workers run.
+        missing = [identity for identity in SOURCES if 'src-' + identity not in self.state['channels']]
+        if not missing or len(self.state['channels']) >= 200:
+            return
+        def mutate(state):
+            members = ['chief']
+            for role in ('news', 'reminder'):
+                bot = next((row for row in state['bots'].values() if row['role'] == role and not row['isChief']), None)
+                if bot:
+                    members.append(bot['id'])
+            for identity in missing:
+                if len(state['channels']) >= 200:
+                    break
+                channel_id = 'src-' + identity
+                state['channels'][channel_id] = {'id': channel_id, 'kind': 'source',
+                    'title': getattr(SOURCES[identity], 'title', '') or identity, 'memberIds': list(members)}
+                for bot_id in members:
+                    self._joined(state, channel_id, state['bots'][bot_id])
+        self.commit(mutate)
 
     def _seed_defaults(self):
         # Seed once, preserving later user changes to members, names and roles.
