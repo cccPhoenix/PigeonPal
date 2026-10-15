@@ -11,6 +11,7 @@
 
 import { parseWhen, reminderTitle } from './parse-time.js'
 import { whenLabel } from '../ui/format.js'
+import { chiefActor } from './activity.js'
 
 const pick = list => list[Math.floor(Math.random() * list.length)]
 // Roughly how long a person takes to type a line.
@@ -31,21 +32,32 @@ export const GREETING = ['嗨～我是{name} 👋', '以后学校里有什么新
 export function createAIChat(client) {
   return {
     async *respond({ text, channelId, state, requestId, quoteId, history }) {
+      const status = type => ({ type: 'activity', id: `activity:${requestId}`,
+        activity: { type, actors: [chiefActor(state.profile)], detail: '本次回复' } })
+      yield status('processing')
       yield { type: 'typing', ms: 0 }
       const quoted = quoteId && Object.values(state.messages).flat().find(message => message.id === quoteId)
-      const result = await client.chat({ text, channelId, requestId,
-        profile: { botName: state.profile.botName, nickname: state.profile.nickname },
-        history, ...(quoted ? { quotedText: String(quoted.text).slice(0, 4000) } : {}),
-        ...(quoted?.item?.noticeId ? { noticeId: quoted.item.noticeId } : {}) })
-      if (!Array.isArray(result.events)) throw new Error('Invalid chat events')
-      for (const event of result.events) {
-        if (event.type === 'action' && ['profile.update', 'reminder.upsert'].includes(event.name)) yield event
-        else if (event.type === 'message' && typeof event.text === 'string') {
-          // Retain the entire answer while keeping persisted bubbles manageable.
-          for (let offset = 0; offset < event.text.length; offset += 1800) {
-            yield { type: 'message', text: event.text.slice(offset, offset + 1800) }
+      try {
+        const result = await client.chat({ text, channelId, requestId,
+          profile: { botName: state.profile.botName, nickname: state.profile.nickname },
+          history, ...(quoted ? { quotedText: String(quoted.text).slice(0, 4000) } : {}),
+          ...(quoted?.item?.noticeId ? { noticeId: quoted.item.noticeId } : {}) })
+        if (!Array.isArray(result.events) || !result.events.some(event => event?.type === 'message'
+          && typeof event.text === 'string' && event.text.trim())) throw new Error('Invalid chat events')
+        for (const event of result.events) {
+          if (!event || typeof event !== 'object') continue
+          if (event.type === 'action' && ['profile.update', 'reminder.upsert'].includes(event.name)) yield event
+          else if (event.type === 'message' && typeof event.text === 'string') {
+            // Retain the entire answer while keeping persisted bubbles manageable.
+            for (let offset = 0; offset < event.text.length; offset += 1800) {
+              yield { type: 'message', text: event.text.slice(offset, offset + 1800) }
+            }
           }
         }
+        yield status('completed')
+      } catch (error) {
+        yield status('failed')
+        throw error
       }
     },
   }

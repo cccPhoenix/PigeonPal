@@ -16,6 +16,7 @@ import { openApiSettings as showApiSettings } from './ui/api-settings.js'
 import { popover, dialog, closeOverlay, overlayFor, toast } from './ui/overlays.js'
 import { icon } from './ui/icons.js'
 import { escapeHtml, plain, whenLabel, clock, personalize } from './ui/format.js'
+import { chatHistory, reminderActivity } from './services/activity.js'
 
 // ---------------------------------------------------------------- services
 const apiClient = createApiClient()
@@ -109,6 +110,7 @@ store.on('message', m => {
 })
 store.on('unread', id => sidebar.update(id))
 store.on('message-updated', message => { sidebar.update(message.channelId); transcript.refreshNotice(message) })
+store.on('activity-updated', message => { sidebar.update(message.channelId); transcript.refreshActivity(message) })
 store.on('channels', () => sidebar.render())
 store.on('profile', patch => {
   applyPrefs()
@@ -164,7 +166,7 @@ async function flush(ch) {
   queues.delete(ch)
   let budget = 18000
   const history = []
-  for (const message of store.state.messages[ch].slice(0, q.firstIndex).slice(-24).reverse()) {
+  for (const message of chatHistory(store.state.messages[ch].slice(0, q.firstIndex)).slice(-24).reverse()) {
     const content = personalize(message.text, store.state.profile).slice(0, 1800)
     if (content.length > budget) break
     budget -= content.length
@@ -188,6 +190,8 @@ async function run(ch, stream) {
         await sleep(260)
       } else if (event.type === 'action') {
         applyAction(ch, event)
+      } else if (event.type === 'activity') {
+        store.upsertActivity(ch, event)
       }
     }
   } catch (error) {
@@ -200,9 +204,23 @@ async function run(ch, stream) {
   }
 }
 
-function applyAction(ch, { name, args }) {
+function applyAction(ch, { name, args, operation }) {
   if (name === 'profile.update') store.setProfile({ nickname: args.nickname })
-  if (name === 'reminder.upsert') store.syncReminders([args])
+  if (name === 'reminder.upsert') acknowledgeReminder(args, ch, operation)
+}
+
+// Only explicit successful API/tool receipts produce confirmations. Polling does not.
+function acknowledgeReminder(reminder, fallback = 'bot', operation) {
+  if (!reminder || typeof reminder.id !== 'string' || !Number.isFinite(reminder.dueAt)
+      || !['pending', 'done', 'cancelled'].includes(reminder.status)) return
+  const previous = store.state.reminders.find(row => row.id === reminder.id)
+  if (previous && (previous.updatedAt || 0) > (reminder.updatedAt || 0)) return
+  const event = reminderActivity(reminder, previous, store.state.profile, operation)
+  store.syncReminders([reminder])
+  if (!event) return
+  event.activity.detail = reminder.status === 'pending' ? whenLabel(reminder.dueAt) : reminder.title
+  const channelId = store.channel(reminder.channelId) ? reminder.channelId : fallback
+  store.upsertActivity(channelId, event)
 }
 
 // ------------------------------------------------------------ transcript
@@ -220,12 +238,12 @@ async function onAction(act, id, el) {
     if (act === 'remind-notice' && m) openNoticeReminder(m, el)
     if (act === 'reminder-done') {
       const { reminder: r } = await apiClient.updateReminder(id, { status: 'done' })
-      store.syncReminders([r])
+      acknowledgeReminder(r)
       run(r.channelId, (async function* () { yield { type: 'typing', ms: 500 }; yield { type: 'message', text: pickOne(['搞定！✌️', '棒～', '收到，辛苦啦 🎉']) } })())
     }
     if (act === 'reminder-snooze') {
       const { reminder: r } = await apiClient.updateReminder(id, { dueAt: Date.now() + 10 * 60_000 })
-      store.syncReminders([r])
+      acknowledgeReminder(r)
       run(r.channelId, (async function* () { yield { type: 'typing', ms: 500 }; yield { type: 'message', text: `好，${clock(r.dueAt)} 再叫你` } })())
     }
   } catch (error) { toast(apiErrorText(error)) }
@@ -286,12 +304,12 @@ ${existing ? `<div class="pop-sep"></div><button class="mi danger" data-at="canc
       title: `「${item.title.slice(0, 35)}」`, channelId: m.channelId, noticeId: item.noticeId || m.id,
     })
     if (b.dataset.at === 'cancel') {
-      try { const result = await apiClient.updateReminder(existing.id, { status: 'cancelled' }); store.syncReminders([result.reminder]) } catch (error) { return toast(apiErrorText(error)) }
+      try { const result = await apiClient.updateReminder(existing.id, { status: 'cancelled' }); acknowledgeReminder(result.reminder) } catch (error) { return toast(apiErrorText(error)) }
       return toast('提醒已取消')
     }
     try {
       const { reminder: r } = await apiClient.createReminder({ title: `「${item.title.slice(0, 75)}」`, dueAt: Number(b.dataset.at), channelId: m.channelId, noticeId: item.noticeId || m.id })
-      store.syncReminders([r])
+      acknowledgeReminder(r, 'bot', 'create')
       run(m.channelId, (async function* () { yield { type: 'typing', ms: 600 }; yield { type: 'message', text: `好嘞～${whenLabel(r.dueAt)} 叫你 ⏰`, quoteId: m.id } })())
     } catch (err) { toast(apiErrorText(err)) }
   })
@@ -407,7 +425,7 @@ function openNewReminder(opener, { title = '', channelId = 'bot', noticeId } = {
         const title = box.querySelector('[data-f="title"]').value
         b.disabled = true
         const { reminder: r } = await apiClient.createReminder({ title, dueAt: new Date(at.value).getTime(), channelId, ...(noticeId ? { noticeId } : {}) })
-        store.syncReminders([r])
+        acknowledgeReminder(r, 'bot', 'create')
         closeOverlay()
         if (active !== channelId) select(channelId)
         run(channelId, (async function* () { yield { type: 'typing', ms: 600 }; yield { type: 'message', text: `记下啦～${whenLabel(r.dueAt)} 叫你${r.title} ⏰` } })())
@@ -467,11 +485,11 @@ const settingsApi = {
   openApiSettings,
   async reminder(id, patch) {
     const { reminder } = await apiClient.updateReminder(id, patch)
-    store.syncReminders([reminder])
+    acknowledgeReminder(reminder)
   },
   async demoReminder() {
     const { reminder } = await apiClient.createReminder({ title: '完成数学作业', dueAt: Date.now() + 5000, channelId: 'bot' })
-    store.syncReminders([reminder])
+    acknowledgeReminder(reminder, 'bot', 'create')
   },
   reset: () => store.reset(),
 }

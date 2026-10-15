@@ -131,6 +131,45 @@ input, textarea, select { font: inherit; color: inherit; }
 .log-inner.swap { animation: log-swap .32s var(--ease-out); }
 @keyframes log-swap { from { opacity: 0; transform: translateY(6px); } }
 .divider { text-align: center; font-size: 13px; line-height: 18px; color: var(--ink-3); margin: 22px 0 14px; }
+/* Persistent system events, visually lighter than chat bubbles. */
+.activity-row { margin: 22px auto; color: var(--ink-3); font-size: 13px; line-height: 26px; text-align: center; }
+.activity-content { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 3px 5px; max-width: 100%; }
+.activity-actor { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; vertical-align: middle; }
+.activity-avatar { display: inline-flex; flex: none; align-items: center; }
+.activity-name { overflow-wrap: anywhere; }
+.activity-copy { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+.activity-row[data-activity="failed"], .activity-row[data-activity="unknown"] { color: var(--ink-2); }
+.activity-enter { animation: activity-in .28s var(--ease-out) both; }
+.activity-row.flash { animation: activity-highlight 1.2s ease-out; border-radius: 10px; }
+@keyframes activity-in { from { opacity: 0; transform: translateY(5px); } }
+@keyframes activity-highlight { from { background: var(--accent-soft); } to { background: transparent; } }
+/* Replay only on newly appended/changed events, never on hydrated history. */
+.activity-row[data-fresh][data-activity="joined"] .mk-body,
+.activity-row[data-fresh][data-activity="handoff"] .activity-actor[data-actor-index="1"] .mk-body { animation: mk-hop .65s .3s var(--spring) 1; }
+.activity-row[data-fresh][data-activity="joined"] .mk-wing-l { animation: mk-flap-l .22s .18s ease-in-out 3; }
+.activity-row[data-fresh][data-activity="joined"] .mk-wing-r { animation: mk-flap-r .22s .18s ease-in-out 3; }
+.activity-row[data-fresh][data-activity="handoff"] .activity-actor[data-actor-index="0"] .mk-body { animation: activity-nod .6s .1s ease-in-out 1; }
+.activity-row[data-fresh][data-activity="processing"] .mk-body { animation: activity-think 2.8s .2s ease-in-out infinite; }
+.activity-row[data-fresh][data-activity="completed"] .mk-body,
+.activity-row[data-fresh][data-activity="reminder_done"] .mk-body { animation: mk-hop .65s .14s var(--spring) 1; }
+.activity-row[data-fresh][data-activity="reminder_saved"] .mk-body,
+.activity-row[data-fresh][data-activity="reminder_updated"] .mk-body { animation: activity-nod .7s .14s ease-in-out 1; }
+.activity-row[data-fresh][data-activity="joined"] .mk-img,
+.activity-row[data-fresh][data-activity="completed"] .mk-img,
+.activity-row[data-fresh][data-activity="reminder_done"] .mk-img { animation: mk-hop .65s .14s var(--spring) 1; }
+.activity-row[data-fresh][data-activity="processing"] .mk-img { animation: activity-think 2.8s .2s ease-in-out infinite; }
+.activity-row[data-fresh]:is([data-activity="reminder_saved"], [data-activity="reminder_updated"]) .mk-img,
+.activity-row[data-fresh][data-activity="handoff"] .activity-actor[data-actor-index="0"] .mk-img { animation: activity-nod .7s .14s ease-in-out 1; }
+.activity-row[data-fresh][data-activity="handoff"] .activity-actor[data-actor-index="1"] .mk-img { animation: mk-hop .65s .3s var(--spring) 1; }
+@keyframes activity-nod { 0%, 100% { transform: none; } 38% { transform: translateY(3%) rotate(5deg); } 70% { transform: translateY(-1%) rotate(-2deg); } }
+@keyframes activity-think { 0%, 100% { transform: none; } 50% { transform: translateY(-1%) rotate(4deg); } }
+:root[data-motion="calm"] .activity-enter { animation: activity-fade .2s ease-out; }
+@keyframes activity-fade { from { opacity: 0; } }
+:root[data-motion="off"] .activity-row, :root[data-motion="off"] .activity-row *,
+:root[data-motion="calm"] .activity-row .mk * { animation: none !important; transition: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .activity-row, .activity-row * { animation: none !important; transition: none !important; }
+}
 .empty { text-align: center; color: var(--ink-3); font-size: 14px; margin-top: 18vh; }
 
 .row { position: relative; display: flex; align-items: flex-start; gap: 10px; margin-top: 4px; }

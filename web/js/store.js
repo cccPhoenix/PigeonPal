@@ -4,9 +4,10 @@
 import { newId } from './reminders.js'
 import { hasLook } from './mark/looks.js'
 import { LOCAL_CHANNELS } from './services/sources.js'
+import { cleanActivity, activityText } from './services/activity.js'
 
 export const STORAGE_KEY = 'pigeonpal.v1'
-const KINDS = ['text', 'notice', 'reminder']
+const KINDS = ['text', 'notice', 'reminder', 'activity']
 
 export function createInitialState() {
   return {
@@ -63,8 +64,12 @@ export function hydrate(raw) {
     if (['all', 'mute'].includes(saved?.notify)) channel.notify = saved.notify
     const list = stored.messages?.[channel.id]
     if (!Array.isArray(list)) continue
-    fresh.messages[channel.id] = list.filter(m => m && typeof m.id === 'string' && ['bot', 'user'].includes(m.role) && KINDS.includes(m.kind) && typeof m.text === 'string' && Number.isFinite(m.at))
+    fresh.messages[channel.id] = list.filter(m => m && typeof m.id === 'string' && KINDS.includes(m.kind)
+      && (m.kind === 'activity' ? m.role === 'system' && cleanActivity(m.activity) : ['bot', 'user'].includes(m.role))
+      && typeof m.text === 'string' && Number.isFinite(m.at))
       .map(m => ({ id: m.id, channelId: channel.id, role: m.role, kind: m.kind, text: m.text.slice(0, 4000), at: m.at,
+        ...(m.kind === 'activity' ? { activity: cleanActivity(m.activity, { restoring: true }),
+          text: activityText(cleanActivity(m.activity, { restoring: true })) } : {}),
         ...(typeof m.quoteId === 'string' ? { quoteId: m.quoteId } : {}),
         ...(typeof m.reminderId === 'string' ? { reminderId: m.reminderId } : {}),
         ...(m.kind === 'notice' && m.item && typeof m.item === 'object' ? { item: cleanItem(m.item) } : {}) }))
@@ -123,6 +128,24 @@ export function createStore(storage = globalThis.localStorage) {
       save()
       emit('message', message)
       return message
+    },
+    upsertActivity(channelId, fields) {
+      const activity = cleanActivity(fields?.activity)
+      if (!state.messages[channelId] || !activity || typeof fields.id !== 'string'
+          || !/^[\w:.-]{1,180}$/.test(fields.id)) return null
+      const existing = this.message(fields.id)
+      if (existing) {
+        if (existing.channelId !== channelId || existing.kind !== 'activity') return null
+        if (activity.type === 'processing' && existing.activity.type !== 'processing') return existing
+        if (existing.activity.type === 'completed' && activity.type === 'failed') return existing
+        if (JSON.stringify(existing.activity) === JSON.stringify(activity)) return existing
+        Object.assign(existing, { activity, text: activityText(activity) })
+        save()
+        emit('activity-updated', existing)
+        return existing
+      }
+      return this.addMessage(channelId, { id: fields.id, role: 'system', kind: 'activity',
+        activity, text: activityText(activity), ...(Number.isFinite(fields.at) ? { at: fields.at } : {}) })
     },
     upsertNotice(channelId, fields, { unread = false } = {}) {
       const existing = state.messages[channelId].find(message => message.kind === 'notice' && message.item?.noticeId === fields.item.noticeId)

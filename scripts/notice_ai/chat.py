@@ -98,7 +98,7 @@ class ChatService:
                 raise AIError("invalid_tool_arguments", 400)
             identity = "rem-chat-" + str(uuid.uuid5(uuid.NAMESPACE_URL, action_id))
             row = self.runtime.create(args["title"], args["dueAt"], channel_id, identity=identity)
-            actions.append({"type": "action", "name": "reminder.upsert", "args": row})
+            actions.append({"type": "action", "name": "reminder.upsert", "operation": "create", "args": row})
             return {"ok": True, "reminder": row}
         if name == "list_reminders":
             if set(args) != {"query"} or not isinstance(args["query"], str) or len(args["query"]) > 200:
@@ -110,7 +110,7 @@ class ChatService:
             if "reminderId" not in args or set(args) - {"reminderId", "title", "dueAt", "status"}:
                 raise AIError("invalid_tool_arguments", 400)
             row = self.runtime.update(args["reminderId"], {key: value for key, value in args.items() if key != "reminderId"})
-            actions.append({"type": "action", "name": "reminder.upsert", "args": row})
+            actions.append({"type": "action", "name": "reminder.upsert", "operation": "update", "args": row})
             return {"ok": True, "reminder": row}
         if name == "set_nickname":
             nickname = args.get("nickname")

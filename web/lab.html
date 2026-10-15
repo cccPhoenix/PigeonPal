@@ -25,12 +25,33 @@
       .demo-chat { width: 100%; padding: 12px 4px 0; border-top: .5px solid var(--line); }
       .demo-chat .row { margin-top: 4px; }
       .demo-chat .row.first { margin-top: 0; }
+      .activity-lab { margin: 0 0 32px; padding: 22px; border-radius: 22px; background: var(--card); box-shadow: inset 0 0 0 .5px var(--line-2); }
+      .activity-lab h2 { margin: 0 0 6px; font-size: 18px; }
+      .activity-lab p { margin: 0 0 16px; font-size: 13px; color: var(--ink-2); line-height: 1.7; }
+      .activity-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .activity-controls [aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+      .activity-preview { height: 340px; overflow-y: auto; margin-top: 16px; border-radius: 16px; background: var(--bg); }
+      .activity-preview .log-inner { padding: 8px 12px 16px; }
+      .activity-preview .empty { margin-top: 110px; }
     </style>
   </head>
   <body>
     <div class="lab">
       <h1>形象实验室</h1>
       <p>10 款参考角色和原有的鸽子草图都在这里。把鼠标移到大图上它会看着你，悬停会被摸摸，点一下会转圈。选好后，在聊天页「我的设置 → 形象与称呼」中切换。</p>
+      <section class="activity-lab" aria-labelledby="activity-title">
+        <h2 id="activity-title">协作提示预览</h2>
+        <p>演示加入频道、交接、处理中和完成时的头像动作。仅为本地预览，不会创建 bot、设置提醒或调用模型；处理中会在原位置更新为完成。</p>
+        <div class="activity-controls" data-activity-controls>
+          <button class="btn primary" data-preview="play">播放协作过程</button>
+          <button class="btn" data-preview="history">查看静态历史</button>
+          <button class="pill" data-motion="lively" aria-pressed="true">灵动</button>
+          <button class="pill" data-motion="calm" aria-pressed="false">克制</button>
+          <button class="pill" data-motion="off" aria-pressed="false">关闭动作</button>
+        </div>
+        <div class="activity-preview" data-activity-preview tabindex="0" aria-label="协作提示演示记录"></div>
+        <button data-activity-jump hidden>新消息</button>
+      </section>
       <div class="grid" id="grid"></div>
       <div class="spec">
         <h3>接入你自己的形象</h3>
@@ -39,6 +60,7 @@
         <code>.mk-body</code> 整体、<code>.mk-eyes</code> 固定眼睛组、<code>.mk-pupils</code> 眼珠（跟随鼠标）、<code>.mk-eye</code> 每只睁开的眼睛（眨眼）、<code>.mk-happy</code> 开心闭眼、可选 <code>.mk-wing-l / .mk-wing-r</code> 翅膀、<code>.mk-shadow</code> 地面阴影。画布 100×100。详见 <code>docs/avatar.md</code>。
       </div>
     </div>
+    <script type="module" src="./js/ui/activity-lab.js"></script>
     <script type="module">
       import { LOOKS, LOOK_IDS } from './js/mark/looks.js'
       import { markHTML, setMarkState, startGaze } from './js/mark/index.js'

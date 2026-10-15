@@ -2,6 +2,7 @@ import { markHTML, setMarkState } from '../mark/index.js'
 import { icon } from './icons.js'
 import { escapeHtml, richText, plain, clock, whenLabel } from './format.js'
 import { eventPhrase, NOTICE_CATEGORIES } from '../services/sources.js'
+import { activityHTML, animateActivity } from './activity.js'
 
 const GROUP_GAP = 5 * 60_000
 const DIVIDER_GAP = 30 * 60_000
@@ -17,7 +18,8 @@ export function createTranscript({ root, jump, store, onAction }) {
   const profile = () => store.state.profile
   const mark = (opts = {}) => markHTML({ look: profile().look, image: profile().look === 'image' ? profile().image : null, label: profile().botName, size: 36, ...opts })
   const nearBottom = () => root.scrollHeight - root.scrollTop - root.clientHeight < 96
-  const toBottom = (smooth = false) => root.scrollTo({ top: root.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
+  const toBottom = (smooth = false) => root.scrollTo({ top: root.scrollHeight,
+    behavior: smooth && profile().motion === 'lively' && !matchMedia('(prefers-reduced-motion: reduce)').matches ? 'smooth' : 'auto' })
 
   function startsGroup(prev, m) {
     return !prev || prev.role !== m.role || m.at - prev.at > GROUP_GAP || m.kind === 'notice' || prev.kind === 'notice' || m.kind === 'reminder'
@@ -57,6 +59,7 @@ export function createTranscript({ root, jump, store, onAction }) {
   }
 
   function rowHTML(m, { first, live, enter }) {
+    if (m.kind === 'activity') return activityHTML(m, profile(), { fresh: Boolean(enter) })
     const user = m.role === 'user'
     const quoted = m.quoteId && store.message(m.quoteId)
     const cls = ['row', user ? 'user' : 'bot', first ? 'first' : '', enter ? 'enter' : ''].filter(Boolean).join(' ')
@@ -108,7 +111,7 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
     if (m.channelId !== channelId || !inner) return
     inner.querySelector('.empty')?.remove()
     const stick = nearBottom() || m.role === 'user'
-    const rows = inner.querySelectorAll('.row')
+    const rows = inner.querySelectorAll('.row, .activity-row')
     const prevRow = [...rows].filter(r => r !== typingRow).at(-1)
     const prev = prevRow && store.message(prevRow.dataset.id)
     const divider = !prev || m.at - prev.at > DIVIDER_GAP
@@ -125,6 +128,7 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
     const frag = toNode(rowHTML(m, { first, live: true, enter: true }))
     const row = frag.firstElementChild
     inner.append(frag)
+    if (m.kind === 'activity') animateActivity(row)
     if (m.role === 'bot' && first) {
       const fresh = row.querySelector('.gutter .mk')
       if (carried) { fresh.replaceWith(carried); setMarkState(carried, 'idle'); setLive(carried) }
@@ -139,7 +143,7 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
 
   function showTyping() {
     if (!inner || typingRow) return
-    const rows = [...inner.querySelectorAll('.row')]
+    const rows = [...inner.querySelectorAll('.row, .activity-row')]
     const last = rows.at(-1)
     const continues = last?.dataset.role === 'bot' && Date.now() - (store.message(last.dataset.id)?.at ?? 0) < GROUP_GAP && store.message(last.dataset.id)?.kind !== 'notice'
     const stick = nearBottom()
@@ -180,11 +184,23 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
   }
 
   function flash(messageId) {
-    const row = inner?.querySelector(`.row[data-id="${CSS.escape(messageId)}"]`)
+    const row = inner?.querySelector(`:is(.row, .activity-row)[data-id="${CSS.escape(messageId)}"]`)
     if (!row) return false
     row.scrollIntoView({ block: 'center', behavior: 'smooth' })
     row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash')
     return true
+  }
+
+  function refreshActivity(message) {
+    const row = inner?.querySelector(`.activity-row[data-id="${CSS.escape(message.id)}"]`)
+    if (!row) return
+    const stick = nearBottom()
+    const changed = row.dataset.activity !== message.activity.type
+    const fresh = toNode(activityHTML(message, profile(), { fresh: changed })).firstElementChild
+    clearTimeout(row._activityTimer)
+    row.replaceWith(fresh)
+    if (changed) animateActivity(fresh)
+    if (stick) requestAnimationFrame(() => toBottom())
   }
 
   function showJump() {
@@ -207,7 +223,7 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
   })
 
   return {
-    render, append, patch, flash, showTyping, hideTyping, refreshNotice,
+    render, append, patch, flash, showTyping, hideTyping, refreshNotice, refreshActivity,
     get channelId() { return channelId },
     refreshMarks() { if (channelId) render(channelId) },
   }

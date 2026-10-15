@@ -13,9 +13,10 @@ chat.respond({ text, channelId, state, requestId, quoteId, history }) // async g
 | 事件 | 含义 |
 |---|---|
 | `{ type: 'typing', ms }` | 显示"正在输入"的时长，头像同时进入思考状态 |
+| `{ type: 'activity', id, activity: { type, actors, detail? } }` | 本机客户端产生的真实请求状态，按 ID 更新同一条轻量提示；不来自模型自由文本 |
 | `{ type: 'message', text, quoteId? }` | 发出一个气泡。正文里可以写 `{nickname}` 和 `{name}`，渲染时再替换 |
 | `{ type: 'action', name: 'profile.update', args: { nickname } }` | 修改称呼 |
-| `{ type: 'action', name: 'reminder.upsert', args: Reminder }` | 同步后端已经保存的提醒 |
+| `{ type: 'action', name: 'reminder.upsert', operation: 'create' / 'update', args: Reminder }` | 同步后端已经保存的提醒，再显示真实确认；兼容没有 operation 的旧回执 |
 
 当前使用 JSON 请求／响应，不做 token 流式输出。前端先显示正在输入，后端调用 DeepSeek，校验并执行受控工具，再返回消息与已完成操作。长回复保留全文并拆成多个气泡。用户在 0.9 秒内连续发送的短消息会合并为一次请求。API key 不由前端聊天参数携带，后端从独立加密配置取得。
 
