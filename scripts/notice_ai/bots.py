@@ -62,7 +62,7 @@ class BotStore:
     def _seed_sources(self):
         # A new crawler source needs a durable channel before AI/DDL workers run.
         missing = [identity for identity in SOURCES if 'src-' + identity not in self.state['channels']]
-        if not missing or len(self.state['channels']) >= 200:
+        if not missing:
             return
         def mutate(state):
             members = ['chief']
@@ -71,8 +71,8 @@ class BotStore:
                 if bot:
                     members.append(bot['id'])
             for identity in missing:
-                if len(state['channels']) >= 200:
-                    break
+                # Registered system sources must migrate even for a full old
+                # state; user-created channels still follow the existing cap.
                 channel_id = 'src-' + identity
                 state['channels'][channel_id] = {'id': channel_id, 'kind': 'source',
                     'title': getattr(SOURCES[identity], 'title', '') or identity, 'memberIds': list(members)}

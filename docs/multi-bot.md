@@ -24,7 +24,7 @@
 
 Bot: `{ id, name, role, instructions, style, look, isChief, createdAt }`。id 为 `chief` 或 `bot-` 加短标识；role 为 `general/news/reminder/writer/planner`。图像数据仅在本机前端形象配置中，不发给模型。
 
-Channel: `{ id, kind: 'group'|'dm'|'source'|'bot', title, memberIds, botId? }`。保留 `bot`、`src-itc`、`src-yunfeng`，新增 `src-qsxy`、`src-bksy`。新群使用 `src-group-...`，私聊使用 `src-dm-<botId>`，兼容已有提醒渠道验证。bot 主入口始终含 Chief；成员必须对应实际存在的 bot。来源扩展时只补缺失频道及默认成员，不重置已有频道成员；后端启动即补齐，自动提醒不依赖先打开页面。
+Channel: `{ id, kind: 'group'|'dm'|'source'|'bot', title, memberIds, botId? }`。保留 `bot`、`src-itc`、`src-yunfeng`，新增 `src-qsxy`、`src-bksy`。新群使用 `src-group-...`，私聊使用 `src-dm-<botId>`，兼容已有提醒渠道验证。bot 主入口始终含 Chief；成员必须对应实际存在的 bot。来源扩展时只补缺失频道及默认成员，不重置已有频道成员；后端启动即补齐，自动提醒不依赖先打开页面。已满额旧配置也会补齐注册系统来源，既有频道全部保留；用户新增频道仍受原有上限约束。
 
 - `GET /api/bots` → `{ bots, channels }`
 - `POST /api/bots/create` body `{ name, role, instructions?, style?, look?, channelId? }` → `{ bot, channel? }`

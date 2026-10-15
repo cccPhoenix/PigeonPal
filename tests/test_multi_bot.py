@@ -509,7 +509,7 @@ class MultiBotTests(unittest.TestCase):
         restored = BotStore(self.path / 'bots.json')
         self.assertEqual(restored.events()['events'], events)
 
-    def test_legacy_seed_respects_full_bot_and_channel_capacity(self):
+    def test_legacy_seed_preserves_full_state_and_adds_registered_sources(self):
         from notice_ai.bots import BotStore
         old = copy.deepcopy(self.bots.state)
         old.pop('defaultTeamVersion', None)
@@ -528,7 +528,8 @@ class MultiBotTests(unittest.TestCase):
         migration_path.write_text(json.dumps(old), encoding='utf-8')
         migrated = BotStore(migration_path)
         self.assertEqual(len(migrated.snapshot()['bots']), 50)
-        self.assertEqual(len(migrated.snapshot()['channels']), 200)
+        self.assertEqual(len(migrated.snapshot()['channels']), 202)
+        self.assertEqual(migrated.channel('src-group-existing-196')['title'], '已有群')
 
 
 if __name__ == '__main__':

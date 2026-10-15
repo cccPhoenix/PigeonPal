@@ -98,6 +98,23 @@ class PublicSourceChatTests(unittest.TestCase):
             self.assertEqual(restored.channel('src-qsxy')['memberIds'], ['chief', 'bot-defaultnews', 'bot-defaultreminder'])
             self.assertEqual(BotStore(path).events(), restored.events())
 
+    def test_registered_sources_migrate_even_when_old_channel_capacity_is_full(self):
+        for total in (199, 200):
+            with self.subTest(total=total), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / 'bots.json'
+                old = BotStore().state
+                for identity in ('src-qsxy', 'src-bksy'):
+                    old['channels'].pop(identity)
+                old['events'] = [row for row in old['events'] if row['channelId'] not in ('src-qsxy', 'src-bksy')]
+                for index in range(total - len(old['channels'])):
+                    identity = 'src-group-legacy-' + str(index)
+                    old['channels'][identity] = {'id': identity, 'kind': 'group', 'title': '保留的频道', 'memberIds': ['chief']}
+                path.write_text(json.dumps(old), encoding='utf-8')
+                restored = BotStore(path)
+                self.assertTrue(set(old['channels']).issubset(restored.state['channels']))
+                self.assertEqual(len(restored.state['channels']), total + 2)
+                self.assertEqual(restored.channel('src-bksy')['memberIds'], ['chief', 'bot-defaultnews', 'bot-defaultreminder'])
+
 
 if __name__ == "__main__":
     unittest.main()
