@@ -16,13 +16,18 @@ export function createTranscript({ root, jump, store, onAction }) {
   let unseen = 0
 
   const profile = () => store.state.profile
-  const mark = (opts = {}) => markHTML({ look: profile().look, image: profile().look === 'image' ? profile().image : null, label: profile().botName, size: 36, ...opts })
+  const resolveActor = actor => store.botAppearance(actor)
+  const mark = ({ botId = 'chief', ...opts } = {}) => {
+    const actor = resolveActor({ id: botId })
+    return markHTML({ look: actor.look, image: actor.look === 'image' ? actor.image : null, label: actor.name, size: 36, ...opts })
+  }
   const nearBottom = () => root.scrollHeight - root.scrollTop - root.clientHeight < 96
   const toBottom = (smooth = false) => root.scrollTo({ top: root.scrollHeight,
     behavior: smooth && profile().motion === 'lively' && !matchMedia('(prefers-reduced-motion: reduce)').matches ? 'smooth' : 'auto' })
 
   function startsGroup(prev, m) {
-    return !prev || prev.role !== m.role || m.at - prev.at > GROUP_GAP || m.kind === 'notice' || prev.kind === 'notice' || m.kind === 'reminder'
+    return !prev || prev.role !== m.role || (prev.botId || 'chief') !== (m.botId || 'chief')
+      || m.at - prev.at > GROUP_GAP || m.kind === 'notice' || prev.kind === 'notice' || m.kind === 'reminder'
   }
 
   function noticeCard(m) {
@@ -59,13 +64,14 @@ export function createTranscript({ root, jump, store, onAction }) {
   }
 
   function rowHTML(m, { first, live, enter }) {
-    if (m.kind === 'activity') return activityHTML(m, profile(), { fresh: Boolean(enter) })
+    if (m.kind === 'activity') return activityHTML(m, profile(), { fresh: Boolean(enter), resolveActor })
     const user = m.role === 'user'
     const quoted = m.quoteId && store.message(m.quoteId)
     const cls = ['row', user ? 'user' : 'bot', first ? 'first' : '', enter ? 'enter' : ''].filter(Boolean).join(' ')
-    return `<div class="${cls}" data-id="${escapeHtml(m.id)}" data-role="${m.role}">
-${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}</div>`}
+    return `<div class="${cls}" data-id="${escapeHtml(m.id)}" data-role="${m.role}" data-bot-id="${escapeHtml(m.botId || 'chief')}">
+${user ? '' : `<div class="gutter">${first ? mark({ botId: m.botId, live, state: 'idle' }) : ''}</div>`}
 <div class="stack">
+  ${!user && first && m.botId ? `<div class="sender-name">${escapeHtml(resolveActor({ id: m.botId }).name)}</div>` : ''}
   ${quoted ? `<button class="quote-ref" data-act="jump" data-id="${escapeHtml(quoted.id)}">${icon('reply', 14)}<span>${escapeHtml(plain(quoted.text, profile()))}</span></button>` : ''}
   <div class="line">
     <div class="bubble">${richText(m.text, profile())}</div>
@@ -120,7 +126,7 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
     let carried = null
     if (typingRow && m.role === 'bot') {
       // The typing row becomes the message: keep its mark so the motion does not restart.
-      carried = typingRow.querySelector('.gutter .mk')
+      if (typingRow.dataset.botId === (m.botId || 'chief')) carried = typingRow.querySelector('.gutter .mk')
       typingRow.remove()
       typingRow = null
     }
@@ -141,13 +147,19 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
     else { unseen += 1; showJump() }
   }
 
-  function showTyping() {
-    if (!inner || typingRow) return
+  function showTyping(botId = 'chief') {
+    if (!inner) return
+    if (typingRow && typingRow.dataset.botId !== botId) {
+      typingRow.remove()
+      typingRow = null
+    }
+    if (typingRow) return
     const rows = [...inner.querySelectorAll('.row, .activity-row')]
     const last = rows.at(-1)
-    const continues = last?.dataset.role === 'bot' && Date.now() - (store.message(last.dataset.id)?.at ?? 0) < GROUP_GAP && store.message(last.dataset.id)?.kind !== 'notice'
+    const continues = last?.dataset.role === 'bot' && (last.dataset.botId || 'chief') === botId
+      && Date.now() - (store.message(last.dataset.id)?.at ?? 0) < GROUP_GAP && store.message(last.dataset.id)?.kind !== 'notice'
     const stick = nearBottom()
-    const html = `<div class="row bot typing enter${continues ? '' : ' first'}" data-role="typing"><div class="gutter">${continues ? '' : mark({ live: true, state: 'thinking' })}</div><div class="stack"><div class="line"><div class="bubble" aria-label="正在输入"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div></div></div></div>`
+    const html = `<div class="row bot typing enter${continues ? '' : ' first'}" data-role="typing" data-bot-id="${escapeHtml(botId)}"><div class="gutter">${continues ? '' : mark({ botId, live: true, state: 'thinking' })}</div><div class="stack"><div class="line"><div class="bubble" aria-label="正在输入"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div></div></div></div>`
     inner.append(toNode(html))
     typingRow = inner.lastElementChild
     if (continues) setMarkState(inner.querySelector('.mk[data-live]'), 'thinking')
@@ -181,6 +193,35 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
     row.querySelector('.bubble').innerHTML = richText(message.text, profile())
     const card = row.querySelector('.card')
     if (card) card.replaceWith(toNode(noticeCard(message)))
+    if (row.dataset.botId !== (message.botId || 'chief')) {
+      row.dataset.botId = message.botId || 'chief'
+      refreshRowMark(row)
+    }
+  }
+
+  function refreshRowMark(row) {
+    const botId = row.dataset.botId || 'chief'
+    const old = row.querySelector('.gutter .mk')
+    if (old) old.replaceWith(toNode(mark({ botId, live: old.hasAttribute('data-live'), state: old.dataset.state || 'idle' })))
+    const name = row.querySelector('.sender-name')
+    if (name) name.textContent = resolveActor({ id: botId }).name
+  }
+
+  function refreshMarks() {
+    if (!inner) return
+    const top = root.scrollTop
+    for (const row of inner.querySelectorAll('.row.bot, .row.typing')) refreshRowMark(row)
+    for (const row of inner.querySelectorAll('.activity-row')) {
+      const message = store.message(row.dataset.id)
+      if (!message) continue
+      const fresh = toNode(activityHTML(message, profile(), { resolveActor })).firstElementChild
+      row.querySelector('.activity-content')?.replaceWith(fresh.firstElementChild)
+      clearTimeout(row._activityTimer)
+      row.classList.remove('activity-enter')
+      if (row.dataset.activity !== 'processing') delete row.dataset.fresh
+      row.setAttribute('aria-live', 'off')
+    }
+    root.scrollTop = top
   }
 
   function flash(messageId) {
@@ -196,7 +237,7 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
     if (!row) return
     const stick = nearBottom()
     const changed = row.dataset.activity !== message.activity.type
-    const fresh = toNode(activityHTML(message, profile(), { fresh: changed })).firstElementChild
+    const fresh = toNode(activityHTML(message, profile(), { fresh: changed, resolveActor })).firstElementChild
     clearTimeout(row._activityTimer)
     row.replaceWith(fresh)
     if (changed) animateActivity(fresh)
@@ -225,6 +266,6 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
   return {
     render, append, patch, flash, showTyping, hideTyping, refreshNotice, refreshActivity,
     get channelId() { return channelId },
-    refreshMarks() { if (channelId) render(channelId) },
+    refreshMarks,
   }
 }

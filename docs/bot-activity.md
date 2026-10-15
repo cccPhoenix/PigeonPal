@@ -1,6 +1,6 @@
 # 协作轻量提示
 
-本轮实现用户已确认的提示交互，不扩展为完整多 bot 管理平台。Chief、可添加的专职 bot 和频道协作是产品方向；当前生产服务仍只有一个 bot。
+提示由真实 bot 成员变更、任务交接、模型请求和提醒保存事件驱动。默认团队为 Chief、通知鸽和提醒鸽，支持按需添加成员，详见 [多 bot 协作](multi-bot.md)。
 
 ## 交互
 
@@ -10,14 +10,14 @@
 
 - 一次真实聊天请求对应一条状态行：等待回复 → 已完成回复／请求未完成。请求失败不宣称任务完成；旧页面关闭后未确认的请求显示“状态待确认”。
 - 提醒创建、修改、完成和取消，只在本机 API 返回并同步有效记录之后显示确认。普通后台轮询不重复产生确认。
-- 加入和交接使用同一组件和数据契约，但生产环境不会虚构这些事件。`lab.html` 提供明确标注的本地预览，不请求 API、不修改真实聊天或提醒。
+- 加入事件在成员保存成功后产生；交接事件在目标成员校验并记录真实委派后产生。`lab.html` 提供明确标注的本地预览，只读当前形象偏好，不请求 API、不修改真实聊天或提醒。
 - 提示保存在消息记录中，独立于模型对话，不作为模型历史发送，不触发额外模型调用。
 
 ## 数据契约
 
 `store.upsertActivity(channelId, { id, at?, activity: { type, actors, detail? } })`
 
-`type` 支持 `joined`、`handoff`、`processing`、`completed`、`failed`、`unknown`、`reminder_saved`、`reminder_updated`、`reminder_done`、`reminder_cancelled`。`actors` 是 1–2 个 `{ id, name, look }`；`chief` 的当前外观从用户资料解析，其余成员按事件快照显示。交接必须有两名成员。同一个 `id` 更新同一行，不增加未读数。终态不退回处理中。
+`type` 支持 `joined`、`handoff`、`processing`、`completed`、`failed`、`unknown`、`reminder_saved`、`reminder_updated`、`reminder_done`、`reminder_cancelled`。`actors` 是 1–2 个 `{ id, name, look }`；按稳定 id 解析当前名字和形象，未注册的预览角色才回退事件快照。交接必须有两名成员。同一个 `id` 更新同一行，不增加未读数。终态不退回处理中。换形象时原地更新，不重播历史动作。
 
 提示文案由程序根据事件类型生成，所有名字和补充内容转义显示。只有已验证的执行代码可以写入该接口；模型自由文本不能创建成功状态。
 

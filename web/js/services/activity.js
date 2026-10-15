@@ -49,7 +49,7 @@ export function chatHistory(messages) {
   return messages.filter(message => ['user', 'bot'].includes(message.role) && message.kind !== 'activity')
 }
 
-export function reminderActivity(reminder, previous, profile, operation) {
+export function reminderActivity(reminder, previous, profile, operation, actor) {
   if (!reminder || typeof reminder.id !== 'string' || !Number.isFinite(reminder.dueAt)
       || !['pending', 'done', 'cancelled'].includes(reminder.status)) return null
   const type = reminder.status === 'done' ? 'reminder_done' : reminder.status === 'cancelled'
@@ -57,5 +57,5 @@ export function reminderActivity(reminder, previous, profile, operation) {
   // The record revision and effective state make retried receipts idempotent.
   const revision = `${Number(reminder.updatedAt) || 0}:${reminder.dueAt}:${reminder.status}`
   return { id: `activity:${reminder.id}:${revision}`,
-    activity: { type, actors: [chiefActor(profile)], detail: '' } }
+    activity: { type, actors: [actor || chiefActor(profile)], detail: '' } }
 }

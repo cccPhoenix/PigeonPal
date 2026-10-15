@@ -31,14 +31,16 @@ export const GREETING = ['嗨～我是{name} 👋', '以后学校里有什么新
 
 export function createAIChat(client) {
   return {
-    async *respond({ text, channelId, state, requestId, quoteId, history }) {
+    async *respond({ text, channelId, state, requestId, quoteId, history, botId }) {
+      const legacy = !state.teamReady
       const status = type => ({ type: 'activity', id: `activity:${requestId}`,
         activity: { type, actors: [chiefActor(state.profile)], detail: '本次回复' } })
-      yield status('processing')
-      yield { type: 'typing', ms: 0 }
+      if (legacy) yield status('processing')
+      yield { type: 'typing', ms: 0, ...(botId ? { botId } : {}) }
       const quoted = quoteId && Object.values(state.messages).flat().find(message => message.id === quoteId)
       try {
         const result = await client.chat({ text, channelId, requestId,
+          ...(botId ? { botId } : {}),
           profile: { botName: state.profile.botName, nickname: state.profile.nickname },
           history, ...(quoted ? { quotedText: String(quoted.text).slice(0, 4000) } : {}),
           ...(quoted?.item?.noticeId ? { noticeId: quoted.item.noticeId } : {}) })
@@ -46,17 +48,22 @@ export function createAIChat(client) {
           && typeof event.text === 'string' && event.text.trim())) throw new Error('Invalid chat events')
         for (const event of result.events) {
           if (!event || typeof event !== 'object') continue
-          if (event.type === 'action' && ['profile.update', 'reminder.upsert'].includes(event.name)) yield event
+          if (event.type === 'action' && ['profile.update', 'reminder.upsert', 'bots.sync'].includes(event.name)) yield event
+          else if (event.type === 'activity' && typeof event.id === 'string') yield event
           else if (event.type === 'message' && typeof event.text === 'string') {
+            if (typeof event.id === 'string') {
+              yield { type: 'message', id: event.id, text: event.text, ...(event.botId ? { botId: event.botId } : {}) }
+              continue
+            }
             // Retain the entire answer while keeping persisted bubbles manageable.
             for (let offset = 0; offset < event.text.length; offset += 1800) {
-              yield { type: 'message', text: event.text.slice(offset, offset + 1800) }
+              yield { type: 'message', text: event.text.slice(offset, offset + 1800), ...(event.botId ? { botId: event.botId } : {}) }
             }
           }
         }
-        yield status('completed')
+        if (legacy) yield status('completed')
       } catch (error) {
-        yield status('failed')
+        if (legacy) yield status('failed')
         throw error
       }
     },

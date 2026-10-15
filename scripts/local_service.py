@@ -24,6 +24,7 @@ from local_auth.manager import AuthActionError, AuthManager
 from local_auth.site_sessions import SiteSessionError, SiteSessionProvider
 from local_auth.vault import CredentialVault
 from pigeonpal_crawler import default_data_dir, single_writer
+from notice_ai.bots import BotStore
 from notice_ai.chat import ChatService
 from notice_ai.client import ModelClient
 from notice_ai.config import AISettings
@@ -59,9 +60,10 @@ class LocalBackend:
         self.ai_settings = AISettings(auth_dir / "ai")
         self.ai_settings_lock = threading.RLock()
         self.runtime = RuntimeStore(data_dir / "runtime-state.json")
+        self.bots = BotStore(data_dir / "bots-state.json")
         self.ai = NoticeProcessor(self.store, data_dir / "notice-ai.json", self.ai_settings.config,
-                                  on_result=self.runtime.schedule_deadline)
-        self.chat = ChatService(self.ai, self.runtime)
+                                  on_result=self._schedule_deadline)
+        self.chat = ChatService(self.ai, self.runtime, self.bots)
         self.engine = CrawlEngine(self.store, list(SOURCES), auth=self.site_auth, sleep=self._sleep,
                                   client_factory=lambda host, protected, session: SlowClient(
                                       host, protected, session, sleep=self._sleep),
@@ -75,6 +77,12 @@ class LocalBackend:
             self.ai.start()
             self.reminder_thread = threading.Thread(target=self._reminders, name="pigeonpal-reminders", daemon=True)
             self.reminder_thread.start()
+
+    def _schedule_deadline(self, notice, result):
+        channel = self.bots.channel("src-" + notice["sourceId"])
+        members = [self.bots.bot(identity) for identity in channel["memberIds"]]
+        author = next((bot for bot in members if bot["role"] == "reminder"), self.bots.bot("chief"))
+        self.runtime.schedule_deadline(notice, result, bot_id=author["id"])
 
     def _reminders(self):
         next_reconcile = 0
@@ -305,6 +313,16 @@ def handler_for(backend):
                         self._json(200, backend.notices(query.get("source", [None])[0], limit, offset))
                     elif path == "/api/notices/detail":
                         self._json(200, backend.notice_detail(query.get("noticeId", [""])[0]))
+                    elif path == "/api/bots":
+                        self._json(200, backend.bots.snapshot())
+                    elif path == "/api/bots/events":
+                        try:
+                            after = int(query.get("after", ["0"])[0])
+                            if after < 0:
+                                raise ValueError
+                        except ValueError:
+                            raise AIError("invalid_input", 400) from None
+                        self._json(200, backend.bots.events(after))
                     elif path == "/api/reminders":
                         self._json(200, {"reminders": backend.runtime.reminders()})
                     elif path == "/api/events":
@@ -338,7 +356,7 @@ def handler_for(backend):
                 except ValueError:
                     length = 0
                 path = urlsplit(self.path).path
-                maximum = 262144 if path in {"/api/chat", "/api/reminders/import"} else MAX_BODY
+                maximum = 262144 if path in {"/api/chat", "/api/reminders/import"} else 24576 if path in {"/api/bots/create", "/api/bots/update"} else MAX_BODY
                 if not 0 < length <= maximum:
                     self._json(413, {"error": "invalid_body_size"})
                     return
@@ -389,9 +407,27 @@ def handler_for(backend):
                     self._json(200 if result.get("cached") else 202, result)
                 elif path == "/api/chat":
                     self._json(200, backend.chat.respond(body))
+                elif path == "/api/bots/create":
+                    self._json(201, backend.bots.create(body))
+                elif path == "/api/bots/update":
+                    if set(body) != {"id", "patch"}:
+                        raise AIError("invalid_input", 400)
+                    self._json(200, backend.bots.update(body.get("id"), body.get("patch")))
+                elif path == "/api/bots/channels/create":
+                    self._json(201, backend.bots.create_channel(body))
+                elif path == "/api/bots/channels/members":
+                    if set(body) != {"channelId", "memberIds"}:
+                        raise AIError("invalid_input", 400)
+                    self._json(200, backend.bots.set_members(body.get("channelId"), body.get("memberIds")))
                 elif path == "/api/reminders/create":
+                    channel_id = body.get("channelId", "bot")
+                    bot_id = body.get("botId")
+                    if bot_id is None:
+                        channel = backend.bots.channel(channel_id)
+                        bot_id = next((identity for identity in channel["memberIds"] if backend.bots.bot(identity)["role"] == "reminder"), None)
+                    bot = backend.bots.route(channel_id, "", bot_id)
                     self._json(201, {"reminder": backend.runtime.create(body.get("title"), body.get("dueAt"),
-                               body.get("channelId", "bot"), body.get("noticeId"))})
+                               channel_id, body.get("noticeId"), bot_id=bot["id"])})
                 elif path == "/api/reminders/update":
                     self._json(200, {"reminder": backend.runtime.update(body.get("id"), body.get("patch"))})
                 elif path == "/api/reminders/import":

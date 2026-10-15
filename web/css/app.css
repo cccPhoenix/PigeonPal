@@ -518,3 +518,31 @@ input, textarea, select { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* Real partners and shared channels */
+.side-section { display:flex; align-items:center; justify-content:space-between; min-height:32px; margin:12px 8px 3px; color:var(--ink-3); font-size:11px; font-weight:600; }
+.side-section .tool { width:24px; height:24px; }
+.ch > .mk { flex:none; }
+.channel-members { position:absolute; right:18px; display:flex; align-items:center; gap:3px; border:0; background:transparent; padding:5px 8px; cursor:pointer; border-radius:18px; color:var(--ink-2); }
+.channel-members:hover { background:var(--hover); }
+.channel-members > span:not(.mk) { font-size:11px; padding-left:5px; }
+.member-choices { display:grid; gap:6px; max-height:300px; overflow:auto; margin:12px 0; }
+.member-choice { display:flex; align-items:center; gap:12px; padding:9px 12px; border:1px solid var(--line); border-radius:12px; cursor:pointer; }
+.member-choice > span { flex:1; font-size:14px; }
+.member-choice small { display:block; color:var(--ink-3); font-size:12px; margin-top:3px; }
+.member-choice input { accent-color:var(--accent); width:16px; height:16px; }
+.team-error { color:var(--danger, #b64343); font-size:13px; line-height:1.6; min-height:1em; }
+.bot-picker { display:flex; flex-wrap:wrap; gap:7px; margin:0 0 20px; }
+.bot-pick { display:flex; align-items:center; gap:7px; padding:5px 10px 5px 5px; border:1px solid var(--line); border-radius:22px; background:transparent; color:var(--ink); cursor:pointer; }
+.bot-pick[aria-pressed="true"] { border-color:var(--accent); background:var(--hover); }
+.dialog textarea.input, .dialog select.input { width:100%; max-width:none; }
+@media (max-width:700px) { .channel-members { right:6px; } .channel-members .mk:nth-child(n+3) { display:none; } .channel-members > span { display:none; } }
+.who { max-width:calc(100% - 210px); }
+.who > span:last-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+@media (max-width:700px) { .who { max-width:calc(100% - 150px); } }
+.bot-config { margin:0 0 20px; padding:12px 14px; border:1px solid var(--line); border-radius:12px; }
+.bot-config summary { cursor:pointer; color:var(--ink-2); font-size:13px; }
+.bot-config[open] summary { margin-bottom:14px; }
+.bot-config textarea.input, .bot-config select.input { width:100%; max-width:none; }
+.bot-config textarea.input, .dialog textarea.input { min-height:88px; height:auto; padding-top:9px; line-height:1.6; resize:vertical; }
+.sender-name { color:var(--ink-3); font-size:12px; line-height:18px; margin:0 3px 4px; }

@@ -1,6 +1,7 @@
 """Persistent reminders, delivery events and idempotent chat receipts."""
 
 import copy
+import heapq
 from datetime import datetime, time as day_time, timedelta, timezone
 import json
 import math
@@ -26,6 +27,8 @@ class RuntimeStore:
         self.lock = threading.RLock()
         self.state = {"schemaVersion": 1, "reminders": {}, "events": [], "sequence": 0, "receipts": {}}
         self.last_bytes = None
+        self._due_heap = []
+        self._scheduled = {}
         damaged = False
         for candidate in (path, self.backup):
             try:
@@ -59,6 +62,7 @@ class RuntimeStore:
                             or not isinstance(receipt.get("response"), dict) or not isinstance(receipt["response"].get("events"), list)):
                         raise ValueError
                 self.state, self.last_bytes = value, raw
+                self._rebuild_queue()
                 return
             except FileNotFoundError:
                 continue
@@ -67,7 +71,26 @@ class RuntimeStore:
         if damaged:
             raise StorageError("runtime_state_invalid")
 
-    def commit(self, mutate):
+    def _rebuild_queue(self):
+        self._scheduled = {identity: row['dueAt'] for identity, row in self.state['reminders'].items()
+                           if row['status'] == 'pending' and row['deliveredAt'] is None}
+        self._due_heap = [(due, identity) for identity, due in self._scheduled.items()]
+        heapq.heapify(self._due_heap)
+
+    def _update_queue(self, identities):
+        for identity in identities:
+            row = self.state['reminders'].get(identity)
+            if row is None or row['status'] != 'pending' or row['deliveredAt'] is not None:
+                self._scheduled.pop(identity, None)
+            elif self._scheduled.get(identity) != row['dueAt']:
+                self._scheduled[identity] = row['dueAt']
+                heapq.heappush(self._due_heap, (row['dueAt'], identity))
+        # Lazy stale entries keep updates cheap; compact on mutations only.
+        if len(self._due_heap) > max(64, 2 * len(self._scheduled)):
+            self._due_heap = [(due, identity) for identity, due in self._scheduled.items()]
+            heapq.heapify(self._due_heap)
+
+    def commit(self, mutate, *, queue_ids=None):
         with self.lock:
             state = copy.deepcopy(self.state)
             result = mutate(state)
@@ -79,6 +102,10 @@ class RuntimeStore:
             except OSError:
                 raise AIError("reminder_storage_error", 503) from None
             self.state, self.last_bytes = state, raw
+            if queue_ids is None:
+                self._rebuild_queue()
+            else:
+                self._update_queue(queue_ids)
             return copy.deepcopy(result)
 
     def reminders(self):
@@ -105,9 +132,11 @@ class RuntimeStore:
             raise AIError("reminder_time_in_past", 400)
         return int(value)
 
-    def create(self, title, due_at, channel_id="bot", notice_id=None, *, identity=None, automatic=False):
+    def create(self, title, due_at, channel_id="bot", notice_id=None, *, identity=None, automatic=False, bot_id="chief"):
         if not isinstance(title, str) or not title.strip() or len(title) > 80 or not valid_channel(channel_id):
             raise AIError("invalid_reminder", 400)
+        if not isinstance(bot_id, str) or not re.fullmatch(r"(?:chief|bot-[a-z0-9]{8,32})", bot_id):
+            raise AIError("invalid_bot", 400)
         if notice_id is not None and (not isinstance(notice_id, str) or len(notice_id) > 160):
             raise AIError("invalid_reminder", 400)
         due = self.due_time(due_at)
@@ -116,7 +145,7 @@ class RuntimeStore:
                 return copy.deepcopy(self.state["reminders"][identity])
             if notice_id is None:
                 duplicate = next((row for row in self.state["reminders"].values() if row["status"] == "pending"
-                                  and row["channelId"] == channel_id and row["title"] == title.strip() and row["dueAt"] == due), None)
+                                  and row["channelId"] == channel_id and row.get("botId", "chief") == bot_id and row["title"] == title.strip() and row["dueAt"] == due), None)
                 if duplicate:
                     return copy.deepcopy(duplicate)
             existing = next((row for row in self.state["reminders"].values()
@@ -124,9 +153,9 @@ class RuntimeStore:
             if existing:
                 return self.update(existing["id"], {"title": title.strip(), "dueAt": due})
             row = {"id": identity or "rem-" + str(uuid.uuid4()), "title": title.strip(), "dueAt": due,
-                   "channelId": channel_id, "noticeId": notice_id, "status": "pending",
+                   "channelId": channel_id, "botId": bot_id, "noticeId": notice_id, "status": "pending",
                    "deliveredAt": None, "createdAt": int(time.time() * 1000), "updatedAt": int(time.time() * 1000), "automatic": automatic}
-            return self.commit(lambda state: state["reminders"].setdefault(row["id"], row))
+            return self.commit(lambda state: state["reminders"].setdefault(row["id"], row), queue_ids=(row["id"],))
 
     def update(self, identity, patch, *, internal=False):
         if not isinstance(identity, str) or not isinstance(patch, dict) or set(patch) - {"title", "dueAt", "status"}:
@@ -155,11 +184,12 @@ class RuntimeStore:
                 row["automatic"] = False
             row["updatedAt"] = int(time.time() * 1000)
             return row
-        return self.commit(mutate)
+        return self.commit(mutate, queue_ids=(identity,))
 
     def import_legacy(self, rows):
         if not isinstance(rows, list) or len(rows) > 200:
             raise AIError("invalid_input", 400)
+        imported = []
         def mutate(state):
             for row in rows:
                 if not isinstance(row, dict) or not isinstance(row.get("id"), str) or len(row["id"]) > 160:
@@ -175,16 +205,17 @@ class RuntimeStore:
                 delivered = row.get("deliveredAt")
                 if delivered is not None:
                     delivered = self.due_time(delivered, allow_past=True)
+                imported.append(row["id"])
                 state["reminders"][row["id"]] = {
                     "id": row["id"], "title": row["title"].strip(), "dueAt": due,
                     "channelId": row.get("channelId") if valid_channel(row.get("channelId")) else "bot",
                     "noticeId": row.get("noticeId") if isinstance(row.get("noticeId"), str) else None,
                     "status": status, "createdAt": int(time.time() * 1000), "updatedAt": int(time.time() * 1000), "deliveredAt": delivered, "automatic": False,
                 }
-        self.commit(mutate)
+        self.commit(mutate, queue_ids=imported)
         return self.reminders()
 
-    def schedule_deadline(self, notice, result):
+    def schedule_deadline(self, notice, result, *, bot_id="chief"):
         identity = "rem-ddl-" + str(uuid.uuid5(uuid.NAMESPACE_URL, notice["id"]))
         deadline = parse_time(result.get("deadlineAt"))
         now = datetime.now(LOCAL_ZONE)
@@ -196,7 +227,7 @@ class RuntimeStore:
                         and old["sourceHash"] != notice.get("contentHash")):
                     def cancel(state):
                         state["reminders"][identity].update(status="cancelled", cancelReason="notice_updated", updatedAt=int(time.time() * 1000))
-                    self.commit(cancel)
+                    self.commit(cancel, queue_ids=(identity,))
             return
         if isinstance(deadline, datetime):
             due = deadline - timedelta(hours=24)
@@ -217,35 +248,55 @@ class RuntimeStore:
                 if old.get("deadlineValue") != result["deadlineAt"] or old["status"] == "cancelled":
                     self.update(identity, {"dueAt": int(due.timestamp() * 1000), "status": "pending"}, internal=True)
                 if old.get("sourceHash") != notice.get("contentHash") or old.get("deadlineValue") != result["deadlineAt"]:
-                    self.commit(lambda state: state["reminders"][identity].update(deadlineValue=result["deadlineAt"], sourceHash=notice.get("contentHash")))
+                    self.commit(lambda state: state["reminders"][identity].update(deadlineValue=result["deadlineAt"], sourceHash=notice.get("contentHash")), queue_ids=())
                 return
             if any(row["noticeId"] == notice["id"] and row["status"] == "pending" for row in self.state["reminders"].values()):
                 return
             row = self.create("「" + notice["title"][:60] + "」截止提醒", int(due.timestamp() * 1000),
-                              "src-" + notice["sourceId"], notice["id"], identity=identity, automatic=True)
-            self.commit(lambda state: state["reminders"][row["id"]].update(deadlineValue=result["deadlineAt"], sourceHash=notice.get("contentHash")))
+                              "src-" + notice["sourceId"], notice["id"], identity=identity, automatic=True, bot_id=bot_id)
+            self.commit(lambda state: state["reminders"][row["id"]].update(deadlineValue=result["deadlineAt"], sourceHash=notice.get("contentHash")), queue_ids=())
 
     def tick(self):
         now = int(time.time() * 1000)
         with self.lock:
-            if not any(row["status"] == "pending" and row["deliveredAt"] is None and row["dueAt"] <= now
-                       for row in self.state["reminders"].values()):
+            due_entries, seen = [], set()
+            while self._due_heap:
+                due, identity = self._due_heap[0]
+                if self._scheduled.get(identity) != due:
+                    heapq.heappop(self._due_heap)
+                    continue
+                if due > now:
+                    break
+                heapq.heappop(self._due_heap)
+                if identity not in seen:
+                    due_entries.append((due, identity))
+                    seen.add(identity)
+            if not due_entries:
                 return
             def mutate(state):
-                for row in state["reminders"].values():
-                    if row["status"] != "pending" or row["deliveredAt"] is not None or row["dueAt"] > now:
+                for _, identity in due_entries:
+                    row = state['reminders'][identity]
+                    if row['status'] != 'pending' or row['deliveredAt'] is not None or row['dueAt'] > now:
                         continue
-                    row["deliveredAt"] = now
-                    row["updatedAt"] = now
-                    state["sequence"] += 1
-                    text = "⏰ {nickname}，" + row["title"] + "到时间啦。"
-                    if row.get("deadlineValue"):
-                        text += "\n原通知截止日期／时间：" + row["deadlineValue"] + "。具体要求请查看原文。"
-                    event_id = "event-" + str(uuid.uuid5(uuid.NAMESPACE_URL, row["id"] + ":" + str(row["dueAt"])))
-                    state["events"].append({"id": event_id, "sequence": state["sequence"],
-                        "channelId": row["channelId"], "at": now, "kind": "reminder", "text": text, "reminderId": row["id"]})
-                state["events"] = state["events"][-2000:]
-            self.commit(mutate)
+                    row['deliveredAt'] = now
+                    row['updatedAt'] = now
+                    state['sequence'] += 1
+                    text = '⏰ {nickname}，' + row['title'] + '到时间啦。'
+                    if row.get('deadlineValue'):
+                        text += '\n原通知截止日期／时间：' + row['deadlineValue'] + '。具体要求请查看原文。'
+                    event_id = 'event-' + str(uuid.uuid5(uuid.NAMESPACE_URL, row['id'] + ':' + str(row['dueAt'])))
+                    state['events'].append({'id': event_id, 'sequence': state['sequence'],
+                        'channelId': row['channelId'], 'botId': row.get('botId', 'chief'), 'at': now,
+                        'kind': 'reminder', 'text': text, 'reminderId': row['id']})
+                state['events'] = state['events'][-2000:]
+            try:
+                self.commit(mutate, queue_ids=seen)
+            except Exception:
+                # Persisted JSON still says pending. Restore popped candidates
+                # so a storage failure cannot silently lose a due reminder.
+                for entry in due_entries:
+                    heapq.heappush(self._due_heap, entry)
+                raise
 
     def events(self, after=0):
         with self.lock:
@@ -261,6 +312,6 @@ class RuntimeStore:
     def save_receipt(self, request_id, value):
         def mutate(state):
             state["receipts"][request_id] = value
-            while len(state["receipts"]) > 100:
+            while len(state["receipts"]) > 500:
                 state["receipts"].pop(next(iter(state["receipts"])))
-        self.commit(mutate)
+        self.commit(mutate, queue_ids=())
