@@ -25,6 +25,7 @@ from local_auth.site_sessions import SiteSessionError, SiteSessionProvider
 from local_auth.vault import CredentialVault
 from pigeonpal_crawler import default_data_dir, single_writer
 from notice_ai.chat import ChatService
+from notice_ai.client import ModelClient
 from notice_ai.config import AISettings
 from notice_ai.runtime import RuntimeStore
 from notice_ai.schema import AIError
@@ -56,6 +57,7 @@ class LocalBackend:
         self.token = secrets.token_urlsafe(32)
         self.stop = threading.Event()
         self.ai_settings = AISettings(auth_dir / "ai")
+        self.ai_settings_lock = threading.RLock()
         self.runtime = RuntimeStore(data_dir / "runtime-state.json")
         self.ai = NoticeProcessor(self.store, data_dir / "notice-ai.json", self.ai_settings.config,
                                   on_result=self.runtime.schedule_deadline)
@@ -91,20 +93,34 @@ class LocalBackend:
             self.stop.wait(10 if failed else 1)
 
     def save_ai(self, body):
-        result = self.ai_settings.save(body)
-        self.ai.configure(self.ai_settings.config)
-        try:
-            self.ai.reconcile_deadlines()
-        except AIError:
-            # Configuration itself was saved successfully. The independent
-            # reminder worker retries this reconciliation without another LLM call.
-            self.ai.last_error = "reminder_storage_error"
-        return result
+        return self.change_ai(self.ai_settings.save, body)
+
+    def change_ai(self, mutate, *args):
+        with self.ai_settings_lock:
+            before = self.ai_settings.config
+            result = mutate(*args)
+            config = self.ai_settings.config
+            # Saving or verifying an inactive profile must not interrupt chat.
+            if before != config:
+                self.ai.configure(config)
+                try:
+                    self.ai.reconcile_deadlines()
+                except AIError:
+                    self.ai.last_error = "reminder_storage_error"
+            return result
 
     def clear_ai(self):
-        result = self.ai_settings.clear()
-        self.ai.configure(self.ai_settings.config)
-        return result
+        return self.change_ai(self.ai_settings.clear)
+
+    def check_ai(self, identity=None):
+        identity, config = self.ai_settings.check_target(identity)
+        try:
+            ModelClient(config).check_connection()
+        except AIError:
+            self.ai_settings.mark_verified(identity, config, success=False)
+            raise
+        settings = self.ai_settings.mark_verified(identity, config)
+        return {"ok": True, "model": config.model, "profileId": identity, "settings": settings}
 
     def notices(self, source_id=None, limit=100, offset=0):
         if source_id is not None and source_id not in SOURCES:
@@ -349,8 +365,23 @@ def handler_for(backend):
                     self._json(200, result)
                 elif path == "/api/ai/clear":
                     self._json(200, backend.clear_ai())
+                elif path == "/api/ai/profiles":
+                    result = backend.change_ai(backend.ai_settings.add, body)
+                    body.clear()
+                    self._json(201, result)
+                elif path == "/api/ai/profiles/update":
+                    result = backend.change_ai(backend.ai_settings.update, body)
+                    body.clear()
+                    self._json(200, result)
+                elif path in {"/api/ai/profiles/select", "/api/ai/profiles/delete"}:
+                    if set(body) != {"id"}:
+                        raise AIError("invalid_input", 400)
+                    mutate = backend.ai_settings.select if path.endswith("/select") else backend.ai_settings.delete
+                    self._json(200, backend.change_ai(mutate, body["id"]))
                 elif path == "/api/ai/check":
-                    self._json(200, backend.ai.client.check_connection())
+                    if set(body) - {"profileId"}:
+                        raise AIError("invalid_input", 400)
+                    self._json(200, backend.check_ai(body.get("profileId")))
                 elif path == "/api/ai/process":
                     if set(body) - {"noticeId", "force"}:
                         raise AIError("invalid_input", 400)
