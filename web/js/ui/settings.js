@@ -1,4 +1,3 @@
-import { botFace, BOT_ROLES } from './team.js'
 import { markHTML } from '../mark/index.js'
 import { LOOKS, LOOK_IDS } from '../mark/looks.js'
 import { pendingReminders } from '../reminders.js'
@@ -18,19 +17,15 @@ const PAGES = [
 ]
 
 // Settings sheet. `api` is what it may change: { store, reminder(id, patch), demoReminder(), reset() }
-export function openSettings(api, { page = 'bot', botId = 'chief', opener } = {}) {
+export function openSettings(api, { page = 'bot', opener } = {}) {
   if (page === 'auth') return api.openIdentityAuth?.(opener)
   if (page === 'api') return api.openApiSettings?.(opener)
   const { store } = api
-  let closed = false
   const box = sheet(`<nav class="sheet-nav"><h2>设置</h2>${PAGES.map(([id, label, ic]) => `<button class="nav-item" data-page="${id}">${icon(ic, 16)}${label}</button>`).join('')}</nav>
 <div class="sheet-body"></div>
-<button class="icon-btn flat sheet-close" data-set="close" aria-label="关闭">${icon('close')}</button>`, { opener, onClose: () => { closed = true } })
+<button class="icon-btn flat sheet-close" data-set="close" aria-label="关闭">${icon('close')}</button>`, { opener })
   const body = box.querySelector('.sheet-body')
   let currentPage = page
-  let selectedBotId = (store.bot?.(botId) || botId === 'chief') ? botId : 'chief'
-  const selectedBot = () => store.bot?.(selectedBotId) || { id: 'chief', name: store.state.profile.botName }
-  const appearance = () => store.botAppearance(selectedBot())
 
   const p = () => store.state.profile
   const seg = (key, options) => `<div class="seg" role="group">${options.map(([v, l]) => `<button data-seg="${key}" data-v="${v}" aria-pressed="${p()[key] === v}">${l}</button>`).join('')}</div>`
@@ -38,19 +33,13 @@ export function openSettings(api, { page = 'bot', botId = 'chief', opener } = {}
 
   const pages = {
     bot: () => `<h3>形象与称呼</h3>
-<div class="bot-picker" aria-label="选择伙伴">${(store.state.bots?.length ? store.state.bots : [{ id: 'chief', name: p().botName }]).map(bot => `<button class="bot-pick" data-bot-pick="${escapeHtml(bot.id)}" aria-pressed="${selectedBotId === bot.id}">${botFace(store, bot, 32)}<span>${escapeHtml(store.botAppearance(bot).name)}</span></button>`).join('')}</div>
-<div class="field"><label for="f-bot">它的名字${selectedBotId === 'chief' ? ' · Chief' : ''}</label><input class="input" id="f-bot" data-bot-name maxlength="${selectedBotId === 'chief' ? 12 : 32}" value="${escapeHtml(appearance().name)}"><span class="help">修改名字需要本机服务保存。每位伙伴的形象分别保存在当前浏览器。</span></div>
-${selectedBotId === 'chief' ? `<div class="field"><label for="f-nick">它怎么叫你</label><input class="input" id="f-nick" data-field="nickname" maxlength="12" placeholder="同学" value="${escapeHtml(p().nickname)}"><span class="help">通知和提醒里的「{称呼}」都会换成这个</span></div>` : ''}
-${store.bot?.(selectedBotId) ? `<details class="bot-config"><summary>职责与说话方式</summary>
-<div class="field"><label for="f-role">职责</label><select class="input" id="f-role" data-config="role">${Object.entries(BOT_ROLES).map(([id, label]) => `<option value="${id}" ${selectedBot().role === id ? 'selected' : ''}>${label}</option>`).join('')}</select></div>
-<div class="field"><label for="f-instructions">工作说明</label><textarea class="input" id="f-instructions" data-config="instructions" maxlength="3000" rows="4">${escapeHtml(selectedBot().instructions || '')}</textarea></div>
-<div class="field"><label for="f-style">说话风格</label><input class="input" id="f-style" data-config="style" maxlength="1000" value="${escapeHtml(selectedBot().style || '')}"></div>
-<div class="team-error" data-config-error role="alert"></div><div class="btns"><button class="btn" data-save-config>保存职责与风格</button></div></details>` : ''}
+<div class="field"><label for="f-bot">它的名字</label><input class="input" id="f-bot" data-field="botName" maxlength="12" value="${escapeHtml(p().botName)}"></div>
+<div class="field"><label for="f-nick">它怎么叫你</label><input class="input" id="f-nick" data-field="nickname" maxlength="12" placeholder="同学" value="${escapeHtml(p().nickname)}"><span class="help">通知和提醒里的「{称呼}」都会换成这个</span></div>
 <div class="field"><span class="label">形象</span>
-<div class="looks">${LOOK_IDS.map(id => `<button class="look" data-look="${id}" aria-pressed="${appearance().look === id}">${markHTML({ look: id, size: 56, live: true })}<span>${escapeHtml(LOOKS[id].label)}</span><small>${escapeHtml(LOOKS[id].note)}</small></button>`).join('')}
-<button class="look" data-look="image" aria-pressed="${appearance().look === 'image'}">${appearance().image ? markHTML({ image: appearance().image, size: 56, live: true }) : `<span class="mk" style="--mk-size:56px;display:grid;place-items:center;color:var(--ink-3)">${icon('image', 26)}</span>`}<span>上传图片</span><small>PNG / SVG / GIF</small></button>
-</div>${appearance().image ? '<button class="btn" data-replace-image style="margin-top:10px">更换图片</button>' : ''}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" data-upload hidden>
-<span class="help">为当前伙伴选择内置形象或上传图片。可以在 <a href="./lab.html" target="_blank">形象实验室</a> 对比大小和动作；选择后会同步到聊天头像。</span></div>`,
+<div class="looks">${LOOK_IDS.map(id => `<button class="look" data-look="${id}" aria-pressed="${p().look === id}">${markHTML({ look: id, size: 56, live: true })}<span>${escapeHtml(LOOKS[id].label)}</span><small>${escapeHtml(LOOKS[id].note)}</small></button>`).join('')}
+<button class="look" data-look="image" aria-pressed="${p().look === 'image'}">${p().image ? markHTML({ image: p().image, size: 56, live: true }) : `<span class="mk" style="--mk-size:56px;display:grid;place-items:center;color:var(--ink-3)">${icon('image', 26)}</span>`}<span>上传图片</span><small>PNG / SVG / GIF</small></button>
+</div><input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" data-upload hidden>
+<span class="help">新增 10 款参考角色。可以在 <a href="./lab.html" target="_blank">形象实验室</a> 对比大小和动作；选择后会同步到聊天头像。</span></div>`,
 
     reminders: () => {
       const list = pendingReminders(store.state)
@@ -94,23 +83,9 @@ ${store.state.channels.filter(c => c.kind === 'source').map(c => `<div class="to
     const t = e.target.closest('button')
     if (!t) return
     if (t.dataset.page) return show(t.dataset.page)
-    if (t.dataset.replaceImage !== undefined) { box.querySelector('[data-upload]').value = ''; return box.querySelector('[data-upload]').click() }
-    if (t.dataset.saveConfig !== undefined) {
-      const targetId = selectedBotId
-      const patch = Object.fromEntries([...box.querySelectorAll('[data-config]')].map(field => [field.dataset.config, field.value.trim()]))
-      const errorNode = box.querySelector('[data-config-error]')
-      t.disabled = true; errorNode.textContent = ''
-      try {
-        await api.updateBotConfig(targetId, patch)
-        if (!closed && currentPage === 'bot' && selectedBotId === targetId) { show('bot'); toast('职责与风格已保存') }
-      } catch (error) { if (!closed) errorNode.textContent = apiErrorText(error) }
-      finally { t.disabled = false }
-      return
-    }
-    if (t.dataset.botPick) { selectedBotId = t.dataset.botPick; return show('bot') }
     if (t.dataset.set === 'close') return closeOverlay()
     if (t.dataset.set === 'reset') { if (confirm('重置本页聊天记录和外观设置？本机通知、提醒、校园绑定和 API 配置会保留。')) { closeOverlay(); api.reset() } return }
-    if (t.dataset.set === 'demo-reminder') { try { await api.demoReminder(); if (!closed) { toast('5 秒后见'); closeOverlay() } } catch (error) { toast(apiErrorText(error)) } return }
+    if (t.dataset.set === 'demo-reminder') { try { await api.demoReminder(); toast('5 秒后见'); closeOverlay() } catch (error) { toast(apiErrorText(error)) } return }
     if (t.dataset.set === 'system-notify') { if (typeof Notification !== 'undefined') Notification.requestPermission().then(() => show(currentPage)); return }
     if (t.dataset.seg) { store.setProfile({ [t.dataset.seg]: t.dataset.v }); return show(currentPage) }
     if (t.dataset.switch) {
@@ -121,8 +96,8 @@ ${store.state.channels.filter(c => c.kind === 'source').map(c => `<div class="to
       return
     }
     if (t.dataset.look) {
-      if (t.dataset.look === 'image' && !appearance().image) return box.querySelector('[data-upload]').click()
-      store.setBotAppearance(selectedBotId, { look: t.dataset.look })
+      if (t.dataset.look === 'image' && !p().image) return box.querySelector('[data-upload]').click()
+      store.setProfile({ look: t.dataset.look })
       return show(currentPage)
     }
     if (t.dataset.remAct) {
@@ -132,21 +107,9 @@ ${store.state.channels.filter(c => c.kind === 'source').map(c => `<div class="to
       return
     }
   })
+  box.addEventListener('dblclick', e => { if (e.target.closest('[data-look="image"]')) box.querySelector('[data-upload]').click() })
   box.addEventListener('change', async e => {
     const t = e.target
-    if (t.dataset.botName !== undefined) {
-      const targetId = selectedBotId
-      const name = t.value.trim()
-      const previous = appearance().name
-      if (!name || name === previous) { t.value = previous; return }
-      t.disabled = true
-      try {
-        await api.updateBotName(targetId, name)
-        toast('名字已保存')
-      } catch (error) { t.value = previous; toast(apiErrorText(error)) }
-      finally { t.disabled = false; if (!closed && box.isConnected && currentPage === 'bot' && selectedBotId === targetId) show('bot') }
-      return
-    }
     if (t.dataset.field) {
       const value = t.value.trim()
       if (t.dataset.field === 'botName' && !value) { t.value = p().botName; return }
@@ -158,14 +121,9 @@ ${store.state.channels.filter(c => c.kind === 'source').map(c => `<div class="to
     }
     if (t.dataset.upload !== undefined && t.files?.[0]) {
       const file = t.files[0]
-      const targetId = selectedBotId
       if (file.size > 1_500_000) { toast('图片太大了，换一张 1.5MB 以内的吧'); return }
       const reader = new FileReader()
-      reader.onload = () => {
-        if (!store.setBotAppearance(targetId, { image: reader.result, look: 'image' })) return toast('图片未能保存，请换一张图片')
-        if (!closed && box.isConnected && currentPage === 'bot' && selectedBotId === targetId) show('bot')
-      }
-      reader.onerror = () => toast('图片读取失败，请重试')
+      reader.onload = () => { store.setProfile({ image: reader.result, look: 'image' }); show(currentPage) }
       reader.readAsDataURL(file)
     }
   })

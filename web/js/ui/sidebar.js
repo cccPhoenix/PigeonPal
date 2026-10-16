@@ -1,18 +1,16 @@
 import { markHTML } from '../mark/index.js'
-import { botFace } from './team.js'
 import { icon } from './icons.js'
 import { escapeHtml, plain, shortTime } from './format.js'
-import { visibleActivity } from '../services/activity.js'
 
 // Sidebar, after DS Bot: brand row, the bot's card (your 1:1 chat), one row per source
 // channel, and two buttons at the foot. Rows update in place so nothing jumps.
-export function createSidebar({ root, store, onSelect, onMe, onAddSource, onSearch, onAddBot, onAddGroup, onBotDM }) {
+export function createSidebar({ root, store, onSelect, onMe, onAddSource, onSearch }) {
   let active = 'bot'
 
   const look = () => { const p = store.state.profile; return { look: p.look, image: p.look === 'image' ? p.image : null, label: p.botName } }
 
   function preview(channelId) {
-    const last = (store.state.messages[channelId] || []).filter(m => m.kind !== 'activity' || visibleActivity(m.activity)).at(-1)
+    const last = store.lastMessage(channelId)
     if (!last) return { text: channelId === 'bot' ? '' : '暂时没有新消息', time: '' }
     const text = plain(last.kind === 'notice' && last.item?.title ? `${last.text.split('\n')[0]}` : last.text, store.state.profile)
     return { text: last.role === 'user' ? `你：${text}` : text, time: shortTime(last.at) }
@@ -22,13 +20,10 @@ export function createSidebar({ root, store, onSelect, onMe, onAddSource, onSear
 
   function rowHTML(c) {
     const p = preview(c.id)
-    const bot = c.kind === 'dm' ? store.bot(c.botId) : null
-    const title = bot ? store.botAppearance(bot).name : c.title
-    const face = bot ? botFace(store, bot, 40) : `<span class="ch-icon" style="--tint:${escapeHtml(c.tint ?? '#eef0f4')}" aria-hidden="true">${escapeHtml(c.emoji ?? (c.kind === 'group' ? '💬' : '🔔'))}</span>`
     return `<button class="ch" data-ch="${escapeHtml(c.id)}" aria-current="${c.id === active}">
-  ${face}
+  <span class="ch-icon" style="--tint:${escapeHtml(c.tint ?? '#eef0f4')}" aria-hidden="true">${escapeHtml(c.emoji ?? '🔔')}</span>
   <span class="ch-text">
-    <span class="ch-line"><span class="ch-title">${escapeHtml(title)}</span><span class="ch-time">${escapeHtml(p.time)}</span></span>
+    <span class="ch-line"><span class="ch-title">${escapeHtml(c.title)}</span><span class="ch-time">${escapeHtml(p.time)}</span></span>
     <span class="ch-line"><span class="ch-preview">${escapeHtml(p.text)}</span>${badge(c.id)}</span>
   </span>
 </button>`
@@ -45,19 +40,10 @@ export function createSidebar({ root, store, onSelect, onMe, onAddSource, onSear
 <button class="bot-card" data-ch="bot" aria-current="${active === 'bot'}" aria-label="和${escapeHtml(p.botName)}聊天">
   ${markHTML({ ...look(), size: 68, live: true, gaze: true, poke: true })}
   <span class="bot-name">${escapeHtml(p.botName)}</span>
-  <span class="bot-tag">Chief · 默认伙伴</span>
+  <span class="bot-tag">校园伙伴</span>
   ${badge('bot')}
 </button>
-<nav class="rows" aria-label="伙伴与频道">
-<div class="side-section"><span>伙伴</span><button class="tool" data-side="add-bot" aria-label="添加伙伴">${icon('plus', 14)}</button></div>
-${(store.state.bots || []).filter(bot => bot.id !== 'chief').map(bot => {
-  const channel = store.state.channels.find(c => c.kind === 'dm' && c.botId === bot.id)
-  return channel ? rowHTML(channel) : `<button class="ch" data-bot-dm="${escapeHtml(bot.id)}">${botFace(store, bot, 40)}<span class="ch-title">${escapeHtml(store.botAppearance(bot).name)}</span></button>`
-}).join('')}
-<div class="side-section"><span>群频道</span><button class="tool" data-side="add-group" aria-label="新建群频道">${icon('plus', 14)}</button></div>
-${store.state.channels.filter(c => c.kind === 'group').map(rowHTML).join('')}
-<div class="side-section"><span>信息来源</span></div>
-${store.state.channels.filter(c => c.kind === 'source').map(rowHTML).join('')}</nav>
+<nav class="rows" aria-label="信息频道">${store.state.channels.filter(c => c.kind === 'source').map(rowHTML).join('')}</nav>
 <div class="side-foot">
   <button class="me" data-side="me" aria-label="我的设置">${escapeHtml(nick)}</button>
   <button class="add-src" data-side="add">${icon('plus', 16)}添加信息来源</button>
@@ -91,8 +77,6 @@ ${store.state.channels.filter(c => c.kind === 'source').map(rowHTML).join('')}</
   }
 
   root.addEventListener('click', e => {
-    const dm = e.target.closest('[data-bot-dm]')
-    if (dm) return onBotDM?.(dm.dataset.botDm, dm)
     const ch = e.target.closest('[data-ch]')
     if (ch) { if (!e.target.closest('.mk[data-poke]') || ch.dataset.ch !== active) onSelect(ch.dataset.ch); return }
     const btn = e.target.closest('[data-side]')
@@ -100,8 +84,6 @@ ${store.state.channels.filter(c => c.kind === 'source').map(rowHTML).join('')}</
     if (btn.dataset.side === 'me') onMe(btn)
     else if (btn.dataset.side === 'add') onAddSource(btn)
     else if (btn.dataset.side === 'search') onSearch(btn)
-    else if (btn.dataset.side === 'add-bot') onAddBot?.(btn)
-    else if (btn.dataset.side === 'add-group') onAddGroup?.(btn)
   })
 
   return { render, update, setActive, bump, botMark: () => root.querySelector('.bot-card .mk') }

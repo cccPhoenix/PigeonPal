@@ -5,7 +5,7 @@
 ## 1. 对话：`web/js/services/chat.js`
 
 ```js
-chat.respond({ text, channelId, state, requestId, quoteId, history, botId? }) // async generator
+chat.respond({ text, channelId, state, requestId, quoteId, history }) // async generator
 ```
 
 按顺序产出事件：
@@ -13,15 +13,11 @@ chat.respond({ text, channelId, state, requestId, quoteId, history, botId? }) //
 | 事件 | 含义 |
 |---|---|
 | `{ type: 'typing', ms }` | 显示"正在输入"的时长，头像同时进入思考状态 |
-| `{ type: 'activity', id, activity: { type, actors, detail? } }` | 后端真实执行状态（旧服务保留客户端请求确认），按 ID 更新同一条轻量提示；不来自模型自由文本 |
-| `{ type: 'message', id?, botId?, text, quoteId? }` | 发出一个气泡；稳定 ID 与后台事件去重，botId 决定头像。正文里可以写 `{nickname}` 和 `{name}`，渲染时再替换 |
+| `{ type: 'message', text, quoteId? }` | 发出一个气泡。正文里可以写 `{nickname}` 和 `{name}`，渲染时再替换 |
 | `{ type: 'action', name: 'profile.update', args: { nickname } }` | 修改称呼 |
-| `{ type: 'action', name: 'reminder.upsert', operation: 'create' / 'update', args: Reminder }` | 同步后端已经保存的提醒，再显示真实确认；兼容没有 operation 的旧回执 |
-| `{ type: 'action', name: 'bots.sync', args: { bots, channels } }` | 同步已保存的角色和成员，不执行模型提供的任意前端动作 |
+| `{ type: 'action', name: 'reminder.upsert', args: Reminder }` | 同步后端已经保存的提醒 |
 
-当前使用 JSON 请求／响应，不做 token 流式输出。前端先显示正在输入，后端调用 DeepSeek，校验并执行受控工具，再返回消息与已完成操作。一份模型回复保留为一个完整消息（最多 20000 字符），避免把 Markdown 代码块、列表或表格从中间切断；服务端历史上下文仍分片和限长。用户在 0.9 秒内连续发送的短消息会合并为一次请求。API key 不由前端聊天参数携带，后端从独立加密配置取得。
-
-聊天正文由 `ui/format.js` 使用本地固定版本 Marked 渲染，支持标题、强调、列表、引用、链接、行内／围栏代码、删除线、只读任务列表和表格。代码块／宽表格在气泡内横向滚动，复制按钮仍复制 Markdown 原文。历史消息刷新时使用同一渲染入口，不重新请求模型。原始 HTML 作为文字显示；链接仅允许 HTTP／HTTPS／mailto，图片转为需点击的链接。解析异常时回退为转义纯文本。来源与许可见 `web/js/vendor/marked/README.md`，不依赖运行时 CDN。
+当前使用 JSON 请求／响应，不做 token 流式输出。前端先显示正在输入，后端调用 DeepSeek，校验并执行受控工具，再返回消息与已完成操作。长回复以完整 Markdown 气泡显示，支持标题、列表、引用、代码块和表格；宽代码与表格在气泡内横向滚动。显示与复制保留完整文档，对话历史单独限制额度。原始 HTML 按文字显示，链接仅允许 HTTP、HTTPS 和 mailto，图片显示为链接。用户在 0.9 秒内连续发送的短消息会合并为一次请求。API key 不由前端聊天参数携带，后端从独立加密配置取得。
 
 ## 2. 信息来源：`web/js/services/sources.js`
 
@@ -50,7 +46,7 @@ client.reminders()
 client.events(cursor)
 ```
 
-`scripts/notice_ai/runtime.py` 持久化提醒和交付事件，服务每秒检查按到期时间排序的内存最小堆；调度及到点发送不调用模型。前端每两秒同步，并在重新可见时立即同步。提醒保存实际作者 botId，完成／取消后停止，改时间重新挂起；一条通知只保留一个有效提醒。旧 `reminders.js` 的纯函数供旧版测试保留，主界面不再启用页面内调度器。
+`scripts/notice_ai/runtime.py` 持久化提醒和交付事件，服务每秒通过本地最小堆检查到期提醒；提醒的创建、修改、取消和重启会更新或重建队列，到期派送不调用模型。前端每两秒同步，并在重新可见时立即同步。提醒完成／取消后停止，改时间重新挂起；一条通知只保留一个有效提醒。旧 `reminders.js` 的纯函数供旧版测试保留，主界面不再启用页面内调度器。
 
 `systemNotify(title, body)` 仍负责浏览器后台通知，需用户授权；频道静音、主动消息开关和安静时段生效。浏览器关闭时，本机服务记录事件供重新打开补收。原生桌面通知和开机常驻尚未实现。
 
@@ -73,18 +69,12 @@ client.events(cursor)
 | `POST /api/ai/clear` | `{}` | 清除全部 API 配置和偏好，不影响校园绑定、通知及提醒 |
 | `POST /api/ai/check` | `profileId?` | 验证指定或当前配置，返回 `{ok, model, profileId, settings}`；不切换使用项 |
 | `GET /api/ai/status` | 无 | 处理状态计数、固定错误码和退避时间 |
-| `POST /api/chat` | `requestId`, `text`, `channelId`, `history`, `profile`, `noticeId?`, `quotedText?`, `botId?` | `{ events: [...] }`；botId / @ 必须是本频道成员 |
-| `GET /api/bots` | 无 | `{ bots, channels }` |
-| `GET /api/bots/events` | `after` | `{ events, cursor }`，独立于提醒游标，事件稳定 id 可更新状态 |
-| `POST /api/bots/create` | `name`, `role`, `instructions?`, `style?`, `look?`, `channelId?` | 201，`{ bot, channel? }` |
-| `POST /api/bots/update` | `id`, `patch` | `{ bot }`，仅允许名字／职责／说明／风格／内置形象 |
-| `POST /api/bots/channels/create` | `title`, `memberIds`, `id?`, `kind?` | 201，`{ channel }` |
-| `POST /api/bots/channels/members` | `channelId`, `memberIds` | `{ channel }`，主入口保留 Chief |
+| `POST /api/chat` | `requestId`, `text`, `channelId`, `history`, `profile`, `noticeId?`, `quotedText?` | `{ events: [...] }` |
 | `GET /api/notices` | `source?`, `limit`（1–100）, `offset` | `{ items, total, nextOffset }`；不包含全文 |
 | `GET /api/notices/detail` | `noticeId` | 正文、附件链接、质量标记和整理结果 |
 | `POST /api/ai/process` | `noticeId`, `force?` | 缓存命中返回 200，否则 202 排队 |
 | `GET /api/reminders` | 无 | `{ reminders }` |
-| `POST /api/reminders/create` | `title`, `dueAt`, `channelId?`, `noticeId?`, `botId?` | 201 和 `{ reminder }`；未指定作者时优先本频道提醒角色 |
+| `POST /api/reminders/create` | `title`, `dueAt`, `channelId?`, `noticeId?` | 201 和 `{ reminder }` |
 | `POST /api/reminders/update` | `id`, `patch` | `{ reminder }` |
 | `POST /api/reminders/import` | `reminders`（每批最多 200） | 按 ID 去重导入，不覆盖已有记录 |
 | `GET /api/events` | `after`（事件序号，默认 0） | `{ events, cursor }`，每页最多 100 个 |
@@ -94,5 +84,3 @@ client.events(cursor)
 API 目录以 schemaVersion 2 加密保存，旧单 Key 配置在读取时兼容迁移，最多 20 份。配置切换和偏好保存即时生效；更换当前配置时丢弃旧通知处理中返回的结果。未启用项的增改与验证不重置模型工作线程。通知整理缓存同时检查正文／版本、模型、地址和提示词版本。遇到损坏缓存先读有效备份，无法恢复时保留文件并暂停处理，不清空原通知。
 
 完整运行条件、DDL 默认规则和本机验收清单见 [ai.md](ai.md)。
-
-多 bot 职责、频道共享历史／私聊隔离、一次交接上限、独立形象及持久化边界见 [multi-bot.md](multi-bot.md)。

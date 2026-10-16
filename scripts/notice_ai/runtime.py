@@ -132,11 +132,9 @@ class RuntimeStore:
             raise AIError("reminder_time_in_past", 400)
         return int(value)
 
-    def create(self, title, due_at, channel_id="bot", notice_id=None, *, identity=None, automatic=False, bot_id="chief"):
+    def create(self, title, due_at, channel_id="bot", notice_id=None, *, identity=None, automatic=False):
         if not isinstance(title, str) or not title.strip() or len(title) > 80 or not valid_channel(channel_id):
             raise AIError("invalid_reminder", 400)
-        if not isinstance(bot_id, str) or not re.fullmatch(r"(?:chief|bot-[a-z0-9]{8,32})", bot_id):
-            raise AIError("invalid_bot", 400)
         if notice_id is not None and (not isinstance(notice_id, str) or len(notice_id) > 160):
             raise AIError("invalid_reminder", 400)
         due = self.due_time(due_at)
@@ -145,7 +143,7 @@ class RuntimeStore:
                 return copy.deepcopy(self.state["reminders"][identity])
             if notice_id is None:
                 duplicate = next((row for row in self.state["reminders"].values() if row["status"] == "pending"
-                                  and row["channelId"] == channel_id and row.get("botId", "chief") == bot_id and row["title"] == title.strip() and row["dueAt"] == due), None)
+                                  and row["channelId"] == channel_id and row["title"] == title.strip() and row["dueAt"] == due), None)
                 if duplicate:
                     return copy.deepcopy(duplicate)
             existing = next((row for row in self.state["reminders"].values()
@@ -153,7 +151,7 @@ class RuntimeStore:
             if existing:
                 return self.update(existing["id"], {"title": title.strip(), "dueAt": due})
             row = {"id": identity or "rem-" + str(uuid.uuid4()), "title": title.strip(), "dueAt": due,
-                   "channelId": channel_id, "botId": bot_id, "noticeId": notice_id, "status": "pending",
+                   "channelId": channel_id, "noticeId": notice_id, "status": "pending",
                    "deliveredAt": None, "createdAt": int(time.time() * 1000), "updatedAt": int(time.time() * 1000), "automatic": automatic}
             return self.commit(lambda state: state["reminders"].setdefault(row["id"], row), queue_ids=(row["id"],))
 
@@ -215,7 +213,7 @@ class RuntimeStore:
         self.commit(mutate, queue_ids=imported)
         return self.reminders()
 
-    def schedule_deadline(self, notice, result, *, bot_id="chief"):
+    def schedule_deadline(self, notice, result):
         identity = "rem-ddl-" + str(uuid.uuid5(uuid.NAMESPACE_URL, notice["id"]))
         deadline = parse_time(result.get("deadlineAt"))
         now = datetime.now(LOCAL_ZONE)
@@ -253,7 +251,7 @@ class RuntimeStore:
             if any(row["noticeId"] == notice["id"] and row["status"] == "pending" for row in self.state["reminders"].values()):
                 return
             row = self.create("「" + notice["title"][:60] + "」截止提醒", int(due.timestamp() * 1000),
-                              "src-" + notice["sourceId"], notice["id"], identity=identity, automatic=True, bot_id=bot_id)
+                              "src-" + notice["sourceId"], notice["id"], identity=identity, automatic=True)
             self.commit(lambda state: state["reminders"][row["id"]].update(deadlineValue=result["deadlineAt"], sourceHash=notice.get("contentHash")), queue_ids=())
 
     def tick(self):
@@ -286,7 +284,7 @@ class RuntimeStore:
                         text += '\n原通知截止日期／时间：' + row['deadlineValue'] + '。具体要求请查看原文。'
                     event_id = 'event-' + str(uuid.uuid5(uuid.NAMESPACE_URL, row['id'] + ':' + str(row['dueAt'])))
                     state['events'].append({'id': event_id, 'sequence': state['sequence'],
-                        'channelId': row['channelId'], 'botId': row.get('botId', 'chief'), 'at': now,
+                        'channelId': row['channelId'], 'at': now,
                         'kind': 'reminder', 'text': text, 'reminderId': row['id']})
                 state['events'] = state['events'][-2000:]
             try:
