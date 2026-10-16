@@ -10,8 +10,24 @@
 // The app uses createAIChat. The old demo remains only for the legacy unit tests.
 
 import { parseWhen, reminderTitle } from './parse-time.js'
-import { whenLabel } from '../ui/format.js'
-import { chiefActor } from './activity.js'
+import { whenLabel, personalize } from '../ui/format.js'
+import { chiefActor, chatHistory } from './activity.js'
+
+// Model history is bounded independently of visible Markdown documents.
+export function buildChatHistory(messages, profile) {
+  const history = []
+  let budget = 18000
+  for (const message of chatHistory(messages).slice().reverse()) {
+    const text = Array.from(personalize(message.text, profile))
+    for (let end = text.length; end > 0; end -= 1800) {
+      const chunk = text.slice(Math.max(0, end - 1800), end)
+      if (history.length >= 24 || chunk.length > budget) return history
+      budget -= chunk.length
+      history.unshift({ role: message.role === 'bot' ? 'assistant' : 'user', content: chunk.join('') })
+    }
+  }
+  return history
+}
 
 const pick = list => list[Math.floor(Math.random() * list.length)]
 // Roughly how long a person takes to type a line.
@@ -55,10 +71,7 @@ export function createAIChat(client) {
               yield { type: 'message', id: event.id, text: event.text, ...(event.botId ? { botId: event.botId } : {}) }
               continue
             }
-            // Retain the entire answer while keeping persisted bubbles manageable.
-            for (let offset = 0; offset < event.text.length; offset += 1800) {
-              yield { type: 'message', text: event.text.slice(offset, offset + 1800), ...(event.botId ? { botId: event.botId } : {}) }
-            }
+            yield { type: 'message', text: event.text, ...(event.botId ? { botId: event.botId } : {}) }
           }
         }
         if (legacy) yield status('completed')

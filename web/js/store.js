@@ -83,7 +83,7 @@ export function hydrate(raw) {
     fresh.messages[channel.id] = list.filter(m => m && typeof m.id === 'string' && KINDS.includes(m.kind)
       && (m.kind === 'activity' ? m.role === 'system' && cleanActivity(m.activity) : ['bot', 'user'].includes(m.role))
       && typeof m.text === 'string' && Number.isFinite(m.at))
-      .map(m => ({ id: m.id, channelId: channel.id, role: m.role, kind: m.kind, text: m.text.slice(0, 4000), at: m.at,
+      .map(m => ({ id: m.id, channelId: channel.id, role: m.role, kind: m.kind, text: m.role === 'bot' ? Array.from(m.text).slice(0, 20000).join('') : m.text.slice(0, 4000), at: m.at,
         ...(validBotId(m.botId) ? { botId: m.botId } : {}),
         ...(m.kind === 'activity' ? { activity: cleanActivity(m.activity, { restoring: true }),
           text: activityText(cleanActivity(m.activity, { restoring: true })) } : {}),

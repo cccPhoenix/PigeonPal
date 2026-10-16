@@ -484,9 +484,10 @@ class BotStore:
             if error:
                 receipt.update(error=error.code, statusCode=error.status)
             if text:
-                for index, offset in enumerate(range(0, len(text), 1800)):
-                    row = self._event(state, {'id': 'team-text-' + request_id + '-' + str(index), 'channelId': channel_id, 'botId': bot_id, 'kind': 'text', 'text': text[offset:offset + 1800]})
-                    self._remember_event(receipt, self.response_event(row))
+                # One model answer is one document: arbitrary character cuts
+                # can split Markdown fences, links, lists or tables.
+                row = self._event(state, {'id': 'team-text-' + request_id + '-0', 'channelId': channel_id, 'botId': bot_id, 'kind': 'text', 'text': text})
+                self._remember_event(receipt, self.response_event(row))
                 if user_text is not None and not error:
                     key = channel_id + ':' + bot_id
                     rows = state['histories'].setdefault(key, [])

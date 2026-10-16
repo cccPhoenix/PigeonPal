@@ -167,14 +167,14 @@ class MultiBotTests(unittest.TestCase):
         self.assertEqual(self.bots.events()['events'], before)
 
     def test_long_reply_chunks_match_poll_ids_and_text(self):
-        text = '长' * 4500 + '末尾信息必须保留'
+        text = '```text\n' + '长' * 4500 + '\n```\n\n末尾信息必须保留'
         chat, client = self.chat([{'content': text}, {'content': '继续'}])
         result = chat.respond(self.body())
         messages = [row for row in result['events'] if row['type'] == 'message']
         polled = [row for row in self.bots.events()['events'] if row['kind'] == 'text']
         self.assertEqual([row['id'] for row in messages], [row['id'] for row in polled])
         self.assertEqual([row['text'] for row in messages], [row['text'] for row in polled])
-        self.assertTrue(all(len(row['text']) <= 1800 for row in messages))
+        self.assertEqual(len(messages), 1, 'a fenced Markdown answer must remain one complete message')
         self.assertEqual(''.join(row['text'] for row in messages), text)
         chat.respond(self.body('继续刚才末尾的内容', 'request-0002'))
         self.assertIn('末尾信息必须保留', json.dumps(client.requests[-1][0], ensure_ascii=False))

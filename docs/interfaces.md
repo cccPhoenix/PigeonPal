@@ -19,7 +19,9 @@ chat.respond({ text, channelId, state, requestId, quoteId, history, botId? }) //
 | `{ type: 'action', name: 'reminder.upsert', operation: 'create' / 'update', args: Reminder }` | 同步后端已经保存的提醒，再显示真实确认；兼容没有 operation 的旧回执 |
 | `{ type: 'action', name: 'bots.sync', args: { bots, channels } }` | 同步已保存的角色和成员，不执行模型提供的任意前端动作 |
 
-当前使用 JSON 请求／响应，不做 token 流式输出。前端先显示正在输入，后端调用 DeepSeek，校验并执行受控工具，再返回消息与已完成操作。长回复保留全文并拆成多个气泡。用户在 0.9 秒内连续发送的短消息会合并为一次请求。API key 不由前端聊天参数携带，后端从独立加密配置取得。
+当前使用 JSON 请求／响应，不做 token 流式输出。前端先显示正在输入，后端调用 DeepSeek，校验并执行受控工具，再返回消息与已完成操作。一份模型回复保留为一个完整消息（最多 20000 字符），避免把 Markdown 代码块、列表或表格从中间切断；服务端历史上下文仍分片和限长。用户在 0.9 秒内连续发送的短消息会合并为一次请求。API key 不由前端聊天参数携带，后端从独立加密配置取得。
+
+聊天正文由 `ui/format.js` 使用本地固定版本 Marked 渲染，支持标题、强调、列表、引用、链接、行内／围栏代码、删除线、只读任务列表和表格。代码块／宽表格在气泡内横向滚动，复制按钮仍复制 Markdown 原文。历史消息刷新时使用同一渲染入口，不重新请求模型。原始 HTML 作为文字显示；链接仅允许 HTTP／HTTPS／mailto，图片转为需点击的链接。解析异常时回退为转义纯文本。来源与许可见 `web/js/vendor/marked/README.md`，不依赖运行时 CDN。
 
 ## 2. 信息来源：`web/js/services/sources.js`
 

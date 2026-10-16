@@ -1,7 +1,7 @@
 import { createStore } from './store.js'
 import { newId, pendingReminders } from './reminders.js'
 import { markHTML, setMarkState, startGaze } from './mark/index.js'
-import { createAIChat, GREETING } from './services/chat.js'
+import { createAIChat, GREETING, buildChatHistory } from './services/chat.js'
 import { startFeed, localAdapters, noticeCopy, eventPhrase, NOTICE_CATEGORIES, LOCAL_CHANNELS } from './services/sources.js'
 import { analysisFields, decisionCopy } from './services/notice-summary.js'
 import { systemNotify } from './services/scheduler.js'
@@ -18,7 +18,7 @@ import { openApiSettings as showApiSettings } from './ui/api-settings.js'
 import { popover, dialog, closeOverlay, overlayFor, toast } from './ui/overlays.js'
 import { icon } from './ui/icons.js'
 import { escapeHtml, plain, whenLabel, clock, personalize } from './ui/format.js'
-import { chatHistory, reminderActivity } from './services/activity.js'
+import { reminderActivity } from './services/activity.js'
 
 // ---------------------------------------------------------------- services
 const apiClient = createApiClient()
@@ -194,14 +194,7 @@ async function flush(ch) {
   queues.delete(ch)
   try {
     try { await refreshTeam() } catch { /* Older/offline local service retains its existing error path. */ }
-    let budget = 18000
-    const history = []
-    for (const message of chatHistory(store.state.messages[ch].slice(0, q.firstIndex)).slice(-24).reverse()) {
-      const content = personalize(message.text, store.state.profile).slice(0, 1800)
-      if (content.length > budget) break
-      budget -= content.length
-      history.unshift({ role: message.role === 'bot' ? 'assistant' : 'user', content })
-    }
+    const history = buildChatHistory(store.state.messages[ch].slice(0, q.firstIndex), store.state.profile)
     await run(ch, services.chat.respond({ text: q.texts.join('\n'), channelId: ch, state: store.state,
       requestId: q.requestId, quoteId: q.quoteId, history,
       ...(store.channel(ch)?.kind === 'dm' ? { botId: store.channel(ch).botId } : {}) }))
