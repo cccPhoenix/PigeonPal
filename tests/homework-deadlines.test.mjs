@@ -8,12 +8,12 @@ const card = (id, deadlineAt) => ({ id, kind: 'notice', role: 'bot', channelId: 
   item: { sourceId: 'xzzd', noticeId: `xzzd:${id}`, kind: 'homework', real: true, title: `作业${id}`,
     homework: { activityId: id, courseId: '3', deadlineAt, courseName: '测试课程', submissionStatus: 'not_submitted', isClosed: false } } })
 
-test('homework cards sort descending by deadline, unknown last, without moving user or reminder rows', () => {
+test('homework cards sort ascending by deadline, unknown last, without moving user or reminder rows', () => {
   const early = card('1', '2030-03-18T10:00:00+08:00'), late = card('2', '2030-03-19T10:00:00+08:00')
   const unknown = card('3', null), reply = { id: 'user', kind: 'text', role: 'user', text: '你好' }
   const reminder = { ...card('4', '2030-03-17'), kind: 'reminder' }
   const original = [unknown, reply, early, late, reminder]
-  assert.deepEqual(orderHomeworkMessages(original).map(row => row.id), ['2', 'user', '1', '3', '4'])
+  assert.deepEqual(orderHomeworkMessages(original).map(row => row.id), ['1', 'user', '2', '3', '4'])
   assert.deepEqual(original.map(row => row.id), ['3', 'user', '1', '2', '4'])
   assert.deepEqual(orderHomeworkMessages([card('5', '2030-03-18T02:00:00Z'), early]).map(row => row.id), ['5', '1'])
 })
@@ -21,7 +21,7 @@ test('homework cards sort descending by deadline, unknown last, without moving u
 test('deadline refresh reorders ordinary cards and keeps unknown relative order', () => {
   const unknown = [card('1', null), card('2', 'invalid')]
   assert.deepEqual(orderHomeworkMessages(unknown).map(row => row.id), ['1', '2'])
-  assert.deepEqual(orderHomeworkMessages([card('1', '2030-03-18'), card('2', '2030-03-19')]).map(row => row.id), ['2', '1'])
+  assert.deepEqual(orderHomeworkMessages([card('1', '2030-03-18'), card('2', '2030-03-19')]).map(row => row.id), ['1', '2'])
 })
 
 test('reminder repost is a separate complete local card, persists and stays out of model history', () => {
@@ -54,8 +54,8 @@ test('live reordering reuses avatar nodes and preserves conversation slots', asy
     },
   }
   reorderHomeworkNodes(container, id => list.find(row => row.id === id), { createComment: () => ({}) })
-  assert.deepEqual(container.children.map(node => node.dataset.id), ['3', 'user', '2', '1'])
-  assert.equal(container.children[0], nodes[3])
+  assert.deepEqual(container.children.map(node => node.dataset.id), ['2', 'user', '3', '1'])
+  assert.equal(container.children[0], nodes[2])
   assert.equal(container.children[1], nodes[1])
   assert.equal(container.children[3].avatar, nodes[0].avatar)
 })
@@ -71,7 +71,7 @@ test('transcript renders sorted initial cards and a complete reminder card at it
   const root = { innerHTML: '', firstElementChild: { querySelectorAll: () => [] }, addEventListener() {}, scrollTo() {} }
   const jump = { addEventListener() {} }
   createTranscript({ root, jump, store }).render('src-xzzd')
-  assert.ok(root.innerHTML.indexOf('data-id="2"') < root.innerHTML.indexOf('data-id="1"'))
+  assert.ok(root.innerHTML.indexOf('data-id="1"') < root.innerHTML.indexOf('data-id="2"'))
   assert.ok(root.innerHTML.indexOf('data-id="1"') < root.innerHTML.indexOf('data-id="event-card"'))
   assert.match(root.innerHTML, /作业截止提醒/)
   assert.match(root.innerHTML, /测试课程/)

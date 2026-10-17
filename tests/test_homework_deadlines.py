@@ -121,7 +121,7 @@ class HomeworkDeadlineTests(unittest.TestCase):
         self.sync(changed); self.runtime.tick()
         self.assertEqual(len(self.runtime.events()['events']), 1)
 
-    def test_paginated_homework_api_uses_the_same_descending_order(self):
+    def test_paginated_homework_api_uses_current_chronological_order(self):
         from types import SimpleNamespace
         from local_service import LocalBackend
         rows = []
@@ -134,7 +134,7 @@ class HomeworkDeadlineTests(unittest.TestCase):
         backend.store = SimpleNamespace(export_items=lambda source: rows)
         backend.ai = SimpleNamespace(analysis=lambda row: {'state': 'local_only'})
         first, second = backend.notices('xzzd', limit=2), backend.notices('xzzd', limit=2, offset=2)
-        self.assertEqual([row['id'] for row in first['items'] + second['items']], ['xzzd:4', 'xzzd:3', 'xzzd:1', 'xzzd:2'])
+        self.assertEqual([row['id'] for row in first['items'] + second['items']], ['xzzd:1', 'xzzd:3', 'xzzd:4'])
 
     def test_explicit_manual_postpone_can_cross_original_homework_deadline(self):
         self.sync(); row = self.runtime.reminders()[0]

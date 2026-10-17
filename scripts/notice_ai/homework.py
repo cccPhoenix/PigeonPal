@@ -5,6 +5,7 @@ import time
 import uuid
 
 from crawlers.homework_contract import normalize_homework
+from crawlers.homework_selection import is_current_homework
 
 SIX_HOURS = 6 * 60 * 60 * 1000
 POLICY = 'homework-six-hour'
@@ -58,7 +59,7 @@ def reconcile_homework(runtime, notices):
                 item = None
             homework = item['homework'] if item else {}
             deadline = deadline_ms(homework.get('deadlineAt'))
-            eligible = (deadline is not None and deadline > now
+            eligible = (is_current_homework(notice, now / 1000) and deadline is not None and deadline > now
                         and homework.get('submissionStatus') != 'submitted' and homework.get('isClosed') is not True)
             if not eligible:
                 if old and old['status'] == 'pending':

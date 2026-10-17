@@ -60,7 +60,7 @@ export function createTranscript({ root, jump, store, onAction }) {
     const user = m.role === 'user'
     const quoted = m.quoteId && store.message(m.quoteId)
     const cls = ['row', user ? 'user' : 'bot', (m.kind === 'notice' || isHomework(m.item)) && m.item?.real ? 'notice-row' : '', first ? 'first' : '', enter ? 'enter' : ''].filter(Boolean).join(' ')
-    return `<div class="${cls}" data-id="${escapeHtml(m.id)}" data-role="${m.role}">
+    return `<div class="${cls}"${isHomeworkCard(m) ? ' data-homework-card="true"' : ''} data-id="${escapeHtml(m.id)}" data-role="${m.role}">
 ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}</div>`}
 <div class="stack">
   ${quoted ? `<button class="quote-ref" data-act="jump" data-id="${escapeHtml(quoted.id)}">${icon('reply', 14)}<span>${escapeHtml(plain(quoted.text, profile()))}</span></button>` : ''}
@@ -138,6 +138,28 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
     else { unseen += 1; showJump() }
   }
 
+  function syncHomeworkSnapshot(id) {
+    if (id !== channelId || !inner) return
+    const stick = nearBottom()
+    const cards = orderHomeworkMessages(store.state.messages[id] || []).filter(isHomeworkCard)
+    const wanted = new Set(cards.map(message => message.id))
+    for (const node of inner.querySelectorAll('[data-homework-card]')) if (!wanted.has(node.dataset.id)) node.remove()
+    if (cards.length) inner.querySelector('.empty')?.remove()
+    let cursor = inner.firstChild
+    for (const message of cards) {
+      let node = inner.querySelector(`.row[data-id="${CSS.escape(message.id)}"]`)
+      if (!node) node = toNode(rowHTML(message, { first: true, live: false })).firstElementChild
+      else refreshNotice(message)
+      if (node !== cursor) {
+        if (node.parentNode === inner && inner.moveBefore) inner.moveBefore(node, cursor)
+        else inner.insertBefore(node, cursor)
+      }
+      cursor = node.nextSibling
+    }
+    if (!inner.querySelector('.row')) inner.innerHTML = '<div class="empty">当前没有符合条件的作业，稍后会继续更新</div>'
+    if (stick) toBottom()
+  }
+
   function showTyping() {
     if (!inner || typingRow) return
     const rows = [...inner.querySelectorAll('.row')]
@@ -209,7 +231,7 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
   })
 
   return {
-    render, append, patch, flash, showTyping, hideTyping, refreshNotice,
+    render, append, syncHomeworkSnapshot, patch, flash, showTyping, hideTyping, refreshNotice,
     get channelId() { return channelId },
     refreshMarks() { if (channelId) render(channelId) },
   }

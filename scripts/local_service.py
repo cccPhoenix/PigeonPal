@@ -20,6 +20,7 @@ from crawlers.engine import CrawlEngine
 from crawlers.http import CrawlFailure, SlowClient
 from crawlers.xzzd import XzzdClient
 from crawlers.sources import SOURCES
+from crawlers.homework_selection import select_homework
 from crawlers.storage import NoticeStore, StorageError
 from local_auth.manager import AuthActionError, AuthManager
 from local_auth.site_sessions import SiteSessionError, SiteSessionProvider
@@ -29,7 +30,7 @@ from notice_ai.chat import ChatService
 from notice_ai.client import ModelClient
 from notice_ai.config import AISettings
 from notice_ai.runtime import RuntimeStore
-from notice_ai.homework import reconcile_homework, deadline_order_ms
+from notice_ai.homework import reconcile_homework
 from notice_ai.schema import AIError
 from notice_ai.service import NoticeProcessor
 
@@ -133,7 +134,7 @@ class LocalBackend:
             raise AIError("invalid_input", 400)
         rows = self.store.export_items(source_id)
         if source_id == "xzzd":
-            rows.sort(key=lambda row: deadline_order_ms(row.get('homework', {}).get('deadlineAt')) or float('-inf'), reverse=True)
+            rows = select_homework(rows)
         items = []
         for row in rows[offset:offset + limit]:
             items.append({key: row[key] for key in ("id", "sourceId", "title", "url", "publishedAt", "state", "version", "contentHash", "lastChangedAt", "firstSeenAt")})

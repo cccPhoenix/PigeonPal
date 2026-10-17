@@ -19,6 +19,7 @@ from urllib.request import Request
 from yunfeng_html import _ATTACHMENT_SUFFIXES, _body_text, _tree, _walk
 
 from .homework_contract import normalize_homework
+from .homework_selection import course_is_current
 from .http import CrawlFailure, SlowClient, has_sensitive_query, retry_after_seconds
 
 
@@ -322,6 +323,10 @@ class XzzdCollector:
         now = self.clock()
         if type(now) not in {int, float} or not math.isfinite(now) or now < 0:
             raise CrawlFailure("invalid_collection_time")
+        checkpoint["courses"] = [course for course in checkpoint["courses"]
+                                  if course_is_current(course.get("courseCode"), now) is not False]
+        checkpoint["items"] = {key: item for key, item in checkpoint["items"].items()
+                               if course_is_current(item.get("homework", {}).get("courseCode"), now) is not False}
         items = checkpoint["items"]
         response = self.client.json("/api/todos?no-intercept=true")
         todos = response.get("todo_list", response.get("todoList"))
@@ -333,6 +338,8 @@ class XzzdCollector:
                 continue
             activity_id = _id(todo.get("id", todo.get("activity_id")))
             item = _item(todo, previous=items.get(activity_id), todo=True)
+            if course_is_current(item["homework"].get("courseCode"), now) is False:
+                continue
             items[activity_id] = item
             count += 1
         requests = 1
@@ -352,7 +359,7 @@ class XzzdCollector:
             for row in rows:
                 # The request excludes ended courses; also reject an explicit
                 # ended status should a server ignore the filter.
-                if row.get("status") == "ended":
+                if row.get("status") == "ended" or course_is_current(row.get("course_code"), now) is False:
                     continue
                 course_id = _id(row.get("id"))
                 if course_id is None:

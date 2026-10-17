@@ -110,6 +110,7 @@ store.on('message', m => {
   transcript.append(m)
   if (m.channelId === active && document.visibilityState === 'visible') store.markRead(m.channelId)
 })
+store.on('homework-snapshot', ({ channelId }) => { sidebar.update(channelId); transcript.syncHomeworkSnapshot(channelId) })
 store.on('unread', id => sidebar.update(id))
 store.on('message-updated', message => { sidebar.update(message.channelId); transcript.refreshNotice(message) })
 store.on('channels', () => sidebar.render())
@@ -181,7 +182,7 @@ async function run(ch, stream) {
         if (ch === active) transcript.showTyping()
         await sleep(event.ms)
       } else if (event.type === 'message') {
-        store.addMessage(ch, { role: 'bot', text: event.text, ...(event.quoteId ? { quoteId: event.quoteId } : {}) }, { unread: ch !== active })
+        store.addMessage(ch, { role: 'bot', text: event.text, ...(event.localOnly === true ? { localOnly: true } : {}), ...(event.quoteId ? { quoteId: event.quoteId } : {}) }, { unread: ch !== active })
         await sleep(260)
       } else if (event.type === 'action') {
         applyAction(ch, event)
@@ -515,10 +516,19 @@ select(active)
 startGaze(document)
 refreshSourceStates()
 
+let homeworkSnapshotReady = false
 startFeed({
   adapters: services.sources,
   intervalMs: services.feedInterval,
   seen: { has: id => store.state.seenItems.includes(id), add: id => { store.state.seenItems.push(id); store.save() } },
+  onSnapshot(channelId, items) {
+    if (channelId !== 'src-xzzd') return
+    const { added } = store.syncHomeworkSnapshot(items, { unread: channelId !== active })
+    if (homeworkSnapshotReady && added.some(message => Date.now() - (items.find(item => item.noticeId === message.item.noticeId)?.receivedAt || 0) < 60_000)) {
+      announce(channelId, '学在浙大·作业', `作业清单已更新，当前展示 ${store.state.messages[channelId].filter(message => message.kind === 'notice').length} 条。`)
+    }
+    homeworkSnapshotReady = true
+  },
   onItem(channelId, item) {
     if (!store.channel(channelId)) return
     const live = Number.isFinite(item.receivedAt) && Date.now() - item.receivedAt < 60_000
