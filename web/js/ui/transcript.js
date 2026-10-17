@@ -2,6 +2,7 @@ import { markHTML, setMarkState } from '../mark/index.js'
 import { icon } from './icons.js'
 import { escapeHtml, richText, plain, clock, whenLabel } from './format.js'
 import { eventPhrase, NOTICE_CATEGORIES } from '../services/sources.js'
+import { isHomework } from '../services/homework.js'
 
 const GROUP_GAP = 5 * 60_000
 const DIVIDER_GAP = 30 * 60_000
@@ -26,16 +27,17 @@ export function createTranscript({ root, jump, store, onAction }) {
   function noticeCard(m) {
     const item = m.item ?? {}
     const channel = store.channel(m.channelId)
+    const homework = isHomework(item)
     const reminder = store.state.reminders.find(r => (r.noticeId === m.id || r.noticeId === item.noticeId) && r.status === 'pending')
     const time = item.eventAt ? `${eventPhrase(item.eventAt)}${item.eventEnd ? ` – ${clock(item.eventEnd)}` : ''}` : ''
     return `<div class="card">
-  <div class="card-src"><span>${escapeHtml(channel?.emoji ?? '🔔')}</span><span>${escapeHtml(channel?.title ?? '')}</span><span>·</span><span>${item.real ? (item.analysisState === 'ready' ? '已整理' : '原站通知') : '示例'}</span></div>
-  ${item.real ? `<details><summary>原标题</summary><div>${escapeHtml(item.title ?? '')}</div></details>` : `<div class="card-title">${escapeHtml(item.title ?? '')}</div>`}
+  <div class="card-src"><span>${escapeHtml(channel?.emoji ?? '🔔')}</span><span>${escapeHtml(channel?.title ?? '')}</span><span>·</span><span>${homework ? '本地作业信息' : item.real ? (item.analysisState === 'ready' ? '已整理' : '原站通知') : '示例'}</span></div>
+  ${homework ? '' : item.real ? `<details><summary>原标题</summary><div>${escapeHtml(item.title ?? '')}</div></details>` : `<div class="card-title">${escapeHtml(item.title ?? '')}</div>`}
   ${!item.real && NOTICE_CATEGORIES[item.category] ? `<div class="card-meta"><span>${escapeHtml(NOTICE_CATEGORIES[item.category])}</span></div>` : ''}
-  ${item.real && !item.publishedDate ? '<div class="card-meta"><span>原站发布日期待补齐</span></div>' : ''}
+  ${!homework && item.real && !item.publishedDate ? '<div class="card-meta"><span>原站发布日期待补齐</span></div>' : ''}
   ${!item.real && (time || item.where) ? `<div class="card-meta">${time ? `<div>${icon('clock', 15)}<span>${escapeHtml(time)}</span></div>` : ''}${item.where ? `<div>${icon('pin', 15)}<span>${escapeHtml(item.where)}</span></div>` : ''}</div>` : ''}
   <div class="pills">
-    <button class="pill" data-act="open-notice" data-id="${escapeHtml(m.id)}">${icon('link', 15)}查看原文</button>
+    <button class="pill" data-act="open-notice" data-id="${escapeHtml(m.id)}">${icon('link', 15)}${homework ? '查看作业' : '查看原文'}</button>
     ${item.real || item.eventAt && item.eventAt > Date.now() || reminder
       ? `<button class="pill${reminder ? ' on' : ''}" data-act="remind-notice" data-id="${escapeHtml(m.id)}">${icon('bell', 15)}${reminder ? `已提醒 · ${escapeHtml(whenLabel(reminder.dueAt))}` : '提醒我'}</button>`
       : ''}
@@ -63,7 +65,7 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
 <div class="stack">
   ${quoted ? `<button class="quote-ref" data-act="jump" data-id="${escapeHtml(quoted.id)}">${icon('reply', 14)}<span>${escapeHtml(plain(quoted.text, profile()))}</span></button>` : ''}
   <div class="line">
-    <div class="bubble">${richText(m.text, profile())}</div>
+    <div class="bubble">${isHomework(m.item) ? escapeHtml(m.text).replace(/\n/g, '<br>') : richText(m.text, profile())}</div>
     <div class="tools"><time>${clock(m.at)}</time><button class="tool" data-act="copy" data-id="${escapeHtml(m.id)}" aria-label="复制">${icon('copy', 16)}</button><button class="tool" data-act="reply" data-id="${escapeHtml(m.id)}" aria-label="引用回复">${icon('reply', 16)}</button></div>
   </div>
   ${m.kind === 'notice' ? noticeCard(m) : ''}
@@ -172,7 +174,7 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
   function refreshNotice(message) {
     const row = inner?.querySelector(`.row[data-id="${CSS.escape(message.id)}"]`)
     if (!row) return
-    row.querySelector('.bubble').innerHTML = richText(message.text, profile())
+    row.querySelector('.bubble').innerHTML = isHomework(message.item) ? escapeHtml(message.text).replace(/\n/g, '<br>') : richText(message.text, profile())
     const card = row.querySelector('.card')
     if (card) card.replaceWith(toNode(noticeCard(message)))
   }

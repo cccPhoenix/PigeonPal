@@ -72,7 +72,11 @@ class CrawlEngine:
         if runtime.client is None or runtime.session is not session:
             previous = runtime.client
             options = {"allow_http": True} if runtime.source.allow_http else {}
-            runtime.client = self.client_factory(
+            factory = self.client_factory
+            if runtime.source.kind == "homework" and factory is SlowClient:
+                from .xzzd import XzzdClient
+                factory = XzzdClient
+            runtime.client = factory(
                 runtime.source.host, runtime.source.requires_auth, session, **options,
             )
             if previous is not None:
@@ -120,10 +124,18 @@ class CrawlEngine:
         self.store.set_source_status(source.id, "running", started)
         try:
             self._check_session(runtime, session)
-            html, final_url = client.html(source.url)
-            self._check_session(runtime, session)
+            collector = None
             try:
-                items = clean_list(source, source.parse_list(html, final_url))
+                if source.kind == "homework":
+                    from .xzzd import XzzdCollector
+                    collector = XzzdCollector(client, self.store.collector_state(source.id), now=self.clock())
+                    collected = collector.collect()
+                    self._check_session(runtime, session)
+                    items = clean_list(source, collected["items"])
+                else:
+                    html, final_url = client.html(source.url)
+                    self._check_session(runtime, session)
+                    items = clean_list(source, source.parse_list(html, final_url))
             except AuthenticationRequired:
                 raise CrawlFailure("auth_required") from None
             except ValueError:
@@ -131,18 +143,27 @@ class CrawlEngine:
                     counts.update(itc_list_diagnostics(html))
                 raise CrawlFailure("list_parse_failed") from None
             synced = self.store.sync_list(source.id, items, self.clock())
+            if collector is not None:
+                self.store.save_collector_state(source.id, collected["checkpoint"])
             counts.update(listItems=len(items), new=synced["new"], metadataChanged=synced["changed"])
             if any(item.get("fetchable") is False for item in items):
                 counts["linksOnly"] = sum(item.get("fetchable") is False for item in items)
             jobs = self.store.detail_jobs(source.id, self.clock(), limit=self.detail_limit,
-                                         recheck_after=RECHECK_AFTER, recheck_limit=1)
+                                         recheck_after=INTERVAL if collector is not None else RECHECK_AFTER,
+                                         recheck_limit=self.detail_limit if collector is not None else 1)
             for job in jobs:
                 try:
                     self._check_session(runtime, session)
-                    html, final_url = client.html(job["url"])
-                    self._check_session(runtime, session)
                     try:
-                        detail = clean_detail(source.parse_article(html, final_url))
+                        if collector is not None:
+                            from .homework_contract import homework_url
+                            raw_detail = collector.detail(job)
+                            detail = clean_detail(raw_detail, allow_empty=True)
+                            final_url = homework_url(raw_detail.get("url", job["url"]))
+                        else:
+                            html, final_url = client.html(job["url"])
+                            detail = clean_detail(source.parse_article(html, final_url))
+                        self._check_session(runtime, session)
                     except AuthenticationRequired:
                         raise CrawlFailure("auth_required") from None
                     except ValueError:
@@ -160,6 +181,7 @@ class CrawlEngine:
                     if failure.code not in {
                         "not_found", "article_parse_failed", "empty_article_body", "invalid_article_date",
                         "image_only_article", "attachment_only_article",
+                        "invalid_homework_metadata", "homework_access_denied",
                     }:
                         raise
             state = "partial" if counts["detailsFailed"] else "ready"

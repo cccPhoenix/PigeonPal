@@ -2,7 +2,7 @@
 
 使用 Python 3.10+，通知数据存为 JSON。采集器自身不调用 LLM；统一服务在独立线程通过 DeepSeek 整理已采集正文，并接入真实来源频道。独立公开采集命令仍只依赖标准库，模型配置和提醒见 [AI 说明](ai.md)。
 
-当前接入四个来源：云峰（`yunfeng`）、ITC（`itc`）、求是学院重要通知（`qsxy`）、本科生院通知公告（`bksy`）。除 ITC 外，另外三个来源在当前本机网络下无需身份认证，前端各有独立频道和采集状态。
+当前接入五个来源：云峰（`yunfeng`）、ITC（`itc`）、求是学院重要通知（`qsxy`）、本科生院通知公告（`bksy`）、学在浙大作业（`xzzd`）。ITC 和学在浙大需要校园身份认证，另外三个来源为公开页面；前端各有独立频道和采集状态。作业使用只读 JSON 接口，范围和分页规则见 [作业采集说明](homework.md)，不套用普通通知的正文整理或历史页规则。
 
 认证、站点 SSO 和正文采集统一使用直连，不自动继承系统或环境变量中的 HTTP/HTTPS 代理。这样避免认证成功、采集却走另一条代理线路而超时。
 
@@ -23,7 +23,7 @@ python -m pip install -r requirements.txt
 python scripts/serve.py
 ```
 
-也可用 `npm run dev` 启动同一个服务。打开 http://127.0.0.1:4174，在「我 → 身份认证」或 ITC 来源卡的「去认证」绑定校园账号；绑定前三个公开来源正常采集，ITC 等待认证。服务仅监听本机，持续运行需保持电脑联网，按 Ctrl+C 停止。不会安装开机服务或创建云端任务。
+也可用 `npm run dev` 启动同一个服务。打开 http://127.0.0.1:4174，在「我 → 身份认证」或来源卡的「去认证」绑定校园账号；绑定前三个公开来源正常采集，ITC 和学在浙大等待认证。服务仅监听本机，持续运行需保持电脑联网，按 Ctrl+C 停止。不会安装开机服务或创建云端任务。
 
 需要指定目录或端口时：
 
@@ -42,9 +42,9 @@ python scripts/pigeonpal_crawler.py status
 python scripts/pigeonpal_crawler.py export --output data/notices.json
 ```
 
-独立 `run` 默认使用 `NoAuthProvider`，不读取保存的校园凭据；ITC 会显示 `auth_required`。已绑定校园账号的受保护来源采集须用统一服务，由认证模块提供内存会话。`--once` 只处理已到检查时间的来源，完成单轮后退出；它同样遵守已有检查时间和失败退避，刚爬过再运行可能显示 `not_due`，不立即重复请求。
+独立 `run` 默认使用 `NoAuthProvider`，不读取保存的校园凭据；ITC 和学在浙大会显示 `auth_required`。已绑定校园账号的受保护来源采集须用统一服务，由认证模块提供内存会话。`--once` 只处理已到检查时间的来源，完成单轮后退出；它同样遵守已有检查时间和失败退避，刚爬过再运行可能显示 `not_due`，不立即重复请求。
 
-- `run --source yunfeng`：只运行云峰；也可指定 `itc`、`qsxy`、`bksy` 或 `all`，默认 `all`。
+- `run --source yunfeng`：只运行云峰；也可指定 `itc`、`qsxy`、`bksy`、`xzzd` 或 `all`，默认 `all`。
 - `run --detail-limit 0`：只检查列表；每轮正文上限可设为 0–3，默认 3。
 - `export --source yunfeng --output data/yunfeng.json`：导出一个来源；默认导出全部。示例放在 Git 已忽略的 `data/` 中。
 

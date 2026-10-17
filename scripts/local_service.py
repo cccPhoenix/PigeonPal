@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from crawlers.engine import CrawlEngine
 from crawlers.http import CrawlFailure, SlowClient
+from crawlers.xzzd import XzzdClient
 from crawlers.sources import SOURCES
 from crawlers.storage import NoticeStore, StorageError
 from local_auth.manager import AuthActionError, AuthManager
@@ -63,7 +64,7 @@ class LocalBackend:
                                   on_result=self.runtime.schedule_deadline)
         self.chat = ChatService(self.ai, self.runtime)
         self.engine = CrawlEngine(self.store, list(SOURCES), auth=self.site_auth, sleep=self._sleep,
-                                  client_factory=lambda host, protected, session, **options: SlowClient(
+                                  client_factory=lambda host, protected, session, **options: (XzzdClient if host == "courses.zju.edu.cn" else SlowClient)(
                                       host, protected, session, sleep=self._sleep, **options),
                                   report=lambda message: print(message, flush=True))
         self.worker_error = None
@@ -132,9 +133,14 @@ class LocalBackend:
         for row in rows[offset:offset + limit]:
             items.append({key: row[key] for key in ("id", "sourceId", "title", "url", "publishedAt", "state", "version", "contentHash", "lastChangedAt", "firstSeenAt")})
             items[-1].update(fetchable=row.get("fetchable", True), qualityFlags=row.get("qualityFlags", []))
+            if "homework" in row:
+                items[-1]["homework"] = row["homework"]
             analysis = self.ai.analysis(row)
             items[-1]["analysis"] = analysis
             visible = {key: items[-1][key] for key in ("title", "url", "publishedAt", "state", "fetchable", "qualityFlags")}
+            if "homework" in row:
+                visible["homework"] = row["homework"]
+                visible["homeworkChangedAt"] = row["lastChangedAt"]
             digest = hashlib.sha256(json.dumps({"metadata": visible, "result": analysis.get("result"),
                                                "analysisState": analysis.get("state"), "analysisError": analysis.get("error")},
                                                sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
@@ -210,6 +216,7 @@ class LocalBackend:
             sources.append({
                 "id": source.id, "title": source.title or source.id,
                 "url": source.url, "requiresAuth": source.requires_auth, "state": state,
+                "kind": source.kind, "allowAI": source.allow_ai,
                 "totalCount": saved.get("totalCount", 0), "completeCount": saved.get("completeCount", 0),
                 "pendingCount": saved.get("pendingCount", 0), "lastCheckedAt": saved.get("lastRunAt"),
                 "skippedCount": saved.get("skippedCount", 0),

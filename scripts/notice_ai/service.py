@@ -98,6 +98,8 @@ class NoticeProcessor:
         source = SOURCES.get(notice.get("sourceId"))
         if source is None:
             raise AIError("invalid_source", 400)
+        if not source.allow_ai:
+            raise AIError("local_only_source", 403)
         if source.requires_auth and not self.config.allow_protected:
             raise AIError("protected_source_not_allowed", 403)
 
@@ -108,6 +110,9 @@ class NoticeProcessor:
         return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
     def analysis(self, notice):
+        source = SOURCES.get(notice.get("sourceId"))
+        if source is not None and not source.allow_ai:
+            return {"state": "local_only", "error": None, "result": None}
         try:
             self._allowed(notice)
             fingerprint = self.fingerprint(notice)
@@ -128,7 +133,7 @@ class NoticeProcessor:
                 "error": self.config.error, "result": None}
 
     def status(self):
-        counts = {"ready": 0, "pending": 0, "processing": 0, "failed": 0, "blocked": 0, "waiting_body": 0, "unconfigured": 0}
+        counts = {"ready": 0, "pending": 0, "processing": 0, "failed": 0, "blocked": 0, "waiting_body": 0, "unconfigured": 0, "local_only": 0}
         for notice in self.notices.export_items():
             state = self.analysis(notice)["state"]
             counts[state] += 1

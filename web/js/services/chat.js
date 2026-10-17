@@ -12,11 +12,20 @@
 import { parseWhen, reminderTitle } from './parse-time.js'
 import { whenLabel, personalize } from '../ui/format.js'
 
+const localHomeworkReminder = reminder => reminder?.channelId === 'src-xzzd' || String(reminder?.noticeId || '').startsWith('xzzd:')
+const localHomeworkMessage = (message, reminders = []) => {
+  // User-typed text remains eligible, even inside the homework channel.
+  if (message?.role === 'user') return false
+  if (message?.item?.homework || message?.item?.sourceId === 'xzzd' || message?.item?.kind === 'homework') return true
+  if (message?.kind === 'reminder' && message?.channelId === 'src-xzzd') return true
+  return Boolean(message?.reminderId && reminders.some(reminder => reminder.id === message.reminderId && localHomeworkReminder(reminder)))
+}
+
 // Model history is bounded independently of visible Markdown documents.
-export function buildChatHistory(messages, profile) {
+export function buildChatHistory(messages, profile, reminders = []) {
   const history = []
   let budget = 18000
-  for (const message of messages.filter(message => ['user', 'bot'].includes(message.role) && message.kind !== 'activity').slice().reverse()) {
+  for (const message of messages.filter(message => ['user', 'bot'].includes(message.role) && message.kind !== 'activity' && !localHomeworkMessage(message, reminders)).slice().reverse()) {
     const text = Array.from(personalize(message.text, profile))
     for (let end = text.length; end > 0; end -= 1800) {
       const chunk = text.slice(Math.max(0, end - 1800), end)
@@ -48,7 +57,8 @@ export function createAIChat(client) {
   return {
     async *respond({ text, channelId, state, requestId, quoteId, history }) {
       yield { type: 'typing', ms: 0 }
-      const quoted = quoteId && Object.values(state.messages).flat().find(message => message.id === quoteId)
+      const candidate = quoteId && Object.values(state.messages).flat().find(message => message.id === quoteId)
+      const quoted = candidate && !localHomeworkMessage(candidate, state.reminders || []) ? candidate : null
       const result = await client.chat({ text, channelId, requestId,
         profile: { botName: state.profile.botName, nickname: state.profile.nickname },
         history, ...(quoted ? { quotedText: String(quoted.text).slice(0, 4000) } : {}),

@@ -14,6 +14,7 @@ from qsxy_html import parse_article as qsxy_article, parse_list as qsxy_list
 from bksy_html import parse_article as bksy_article, parse_list as bksy_list
 
 from .http import CrawlFailure, has_sensitive_query, notice_url
+from .homework_contract import homework_url, normalize_homework
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,8 @@ class Source:
     parse_article: Callable
     title: str = ""
     allow_http: bool = False
+    kind: str = "notice"
+    allow_ai: bool = True
 
 
 SOURCES = {
@@ -41,6 +44,8 @@ SOURCES = {
     "bksy": Source("bksy", "https://bksy.zju.edu.cn/28418/list.htm",
                    "bksy.zju.edu.cn", False, bksy_list, bksy_article,
                    title="本科生院·通知公告"),
+    "xzzd": Source("xzzd", "https://courses.zju.edu.cn/login", "courses.zju.edu.cn",
+                   True, None, None, title="学在浙大·作业", kind="homework", allow_ai=False),
 }
 
 
@@ -78,7 +83,7 @@ def clean_list(source: Source, items: list[dict]) -> list[dict]:
         if not re.fullmatch(re.escape(source.id) + r":[A-Za-z0-9_-]+", item_id) or not title:
             raise CrawlFailure("invalid_list_metadata")
         try:
-            if published or source.id not in {"itc", "qsxy", "bksy"}:
+            if published or source.id not in {"itc", "qsxy", "bksy", "xzzd"}:
                 if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", published):
                     raise ValueError
                 date.fromisoformat(published)
@@ -89,7 +94,15 @@ def clean_list(source: Source, items: list[dict]) -> list[dict]:
         flags = _quality_flags(item.get("qualityFlags", []))
         if source.id in {"qsxy", "bksy"} and not published:
             flags.append("publication_date_missing")
-        if item.get("fetchable") is False:
+        if source.kind == "homework":
+            try:
+                url = homework_url(item.get("url", ""))
+                homework = normalize_homework(item.get("homework"))
+                if item_id != "xzzd:" + homework["activityId"]:
+                    raise ValueError("invalid_homework_metadata")
+            except ValueError:
+                raise CrawlFailure("invalid_list_metadata") from None
+        elif item.get("fetchable") is False:
             url = item.get("url", "")
             if source.id not in {"qsxy", "bksy"} or not _safe_metadata_url(url):
                 raise CrawlFailure("invalid_notice_url")
@@ -99,26 +112,28 @@ def clean_list(source: Source, items: list[dict]) -> list[dict]:
             continue
         seen.add(item_id)
         result = {"id": item_id, "title": title, "publishedAt": published, "url": url}
+        if source.kind == "homework":
+            result["homework"] = homework
         if "fetchable" in item:
             result["fetchable"] = item["fetchable"]
         if flags:
             result["qualityFlags"] = sorted(set(flags))
         cleaned.append(result)
-    if not cleaned:
+    if not cleaned and source.kind != "homework":
         raise CrawlFailure("empty_notice_list")
     return cleaned
 
 
-def clean_detail(detail: dict) -> dict:
+def clean_detail(detail: dict, *, allow_empty: bool = False) -> dict:
     title = " ".join(detail.get("title", "").split())
     content = detail.get("content", "").strip()
     flags = _quality_flags(detail.get("qualityFlags", []))
-    if not content:
+    if not content and not allow_empty:
         if "image_only" in flags:
             raise CrawlFailure("image_only_article")
         if "attachment_only" in flags:
             raise CrawlFailure("attachment_only_article")
-    if not title or not content:
+    if not title or (not content and not allow_empty):
         raise CrawlFailure("empty_article_body")
     published = detail.get("publishedAt", "")
     if published:
@@ -141,6 +156,11 @@ def clean_detail(detail: dict) -> dict:
         "publisher": detail.get("publisher", ""), "attachments": attachments,
         "qualityFlags": sorted(set(flags)),
     }
+    if allow_empty:
+        try:
+            result["homework"] = normalize_homework(detail.get("homework"))
+        except ValueError:
+            raise CrawlFailure("invalid_homework_metadata") from None
     if "images" in detail:
         images = []
         seen_images = set()

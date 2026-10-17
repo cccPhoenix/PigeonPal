@@ -310,7 +310,7 @@ class LocalAPITests(unittest.TestCase):
             self.assertEqual(finished["state"], "authenticated")
             status, sources = self.request("GET", "/api/sources", headers=self.headers())
             self.assertEqual(status, 200)
-            self.assertEqual({source["id"] for source in sources["sources"]}, {"yunfeng", "itc", "qsxy", "bksy"})
+            self.assertEqual({source["id"] for source in sources["sources"]}, {"yunfeng", "itc", "qsxy", "bksy", "xzzd"})
         for secret in ["fake-username", "fake-secret-password"]:
             self.assertNotIn(secret, output.getvalue())
             self.assertNotIn(secret, json.dumps([started, finished, sources]))

@@ -1,3 +1,5 @@
+import { homeworkCopy, isHomework } from './homework.js'
+
 // One plain-text presentation shared by channel messages and the detail dialog.
 export const DECISION_FIELDS = ['noticeType', 'participation', 'benefits', 'eventTime', 'deadlineText']
 
@@ -12,6 +14,7 @@ export function analysisFields(analysis) {
 }
 
 export function decisionCopy(item) {
+  if (isHomework(item)) return homeworkCopy(item)
   if (item.analysisState === 'waiting_body' && item.bodyStatus) return item.bodyStatus
   if (item.analysisState !== 'ready') {
     return ({

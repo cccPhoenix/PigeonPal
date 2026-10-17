@@ -16,6 +16,7 @@ import re
 import tempfile
 from datetime import datetime, timezone
 from urllib.parse import parse_qsl, unquote, urlsplit
+from .homework_contract import normalize_homework
 
 
 class StorageError(RuntimeError):
@@ -97,7 +98,7 @@ def _flags(row, extra=()):
         flags.add("publication_date_missing")
     if row["state"] == "skipped":
         flags.add("body_not_fetched")
-    elif row["state"] == "pending" or not row.get("content"):
+    elif row["state"] == "pending" or (not row.get("content") and "homework" not in row):
         flags.add("pending_body")
     if row["state"] == "failed":
         flags.add("body_failed")
@@ -155,6 +156,11 @@ def _validate(state):
                     raise ValueError
             if type(row["listMetadata"].get("fetchable", True)) is not bool:
                 raise ValueError
+            for container in (row, row["listMetadata"]):
+                if "homework" in container:
+                    if row["sourceId"] != "xzzd":
+                        raise ValueError
+                    normalize_homework(container["homework"])
             list_flags = row["listMetadata"].get("qualityFlags", [])
             if not isinstance(list_flags, list) or not all(isinstance(flag, str) and _CODE.fullmatch(flag) for flag in list_flags):
                 raise ValueError
@@ -197,6 +203,9 @@ def _validate(state):
                     raise ValueError
             _time(run["startedAt"])
             _time(run["finishedAt"])
+        collectors = state.get("collectors", {})
+        if not isinstance(collectors, dict) or any(not isinstance(value, dict) for value in collectors.values()):
+            raise ValueError
     except (KeyError, ValueError, TypeError, StorageError):
         raise StorageError("invalid_state_file") from None
     return state
@@ -275,6 +284,13 @@ class NoticeStore:
             if not isinstance(notice_id, str) or not notice_id or not _text(item.get("title")):
                 raise StorageError("invalid_notice_metadata")
             metadata = {"title": _text(item["title"]), "url": _url(item.get("url")), "publishedAt": _text(item.get("publishedAt"))}
+            if "homework" in item:
+                try:
+                    if source_id != "xzzd":
+                        raise ValueError
+                    metadata["homework"] = normalize_homework(item["homework"])
+                except ValueError:
+                    raise StorageError("invalid_homework_metadata") from None
             if type(item.get("fetchable", True)) is not bool:
                 raise StorageError("invalid_notice_metadata")
             if item.get("fetchable") is False:
@@ -354,7 +370,13 @@ class NoticeStore:
         if not row["listMetadata"].get("fetchable", True):
             raise StorageError("notice_not_fetchable")
         content = str(detail.get("content") or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-        if not content:
+        homework = None
+        if source_id == "xzzd":
+            try:
+                homework = normalize_homework(detail.get("homework", row["listMetadata"].get("homework")))
+            except ValueError:
+                raise StorageError("invalid_homework_metadata") from None
+        if not content and homework is None:
             self.fail_detail(source_id, notice_id, "empty_body", now)
             return False
         attachments = []
@@ -371,6 +393,8 @@ class NoticeStore:
             "publisher": _text(detail.get("publisher")), "content": content,
             "attachments": attachments,
         }
+        if homework is not None:
+            snapshot["homework"] = homework
         images = [_url(url) for url in detail.get("images") or []]
         content_hash = _hash({**snapshot, "images": images})
         final_url = _url(final_url)
@@ -387,6 +411,22 @@ class NoticeStore:
             return changed
 
         return self._commit(change)
+
+    def collector_state(self, source_id):
+        return copy.deepcopy(self._state.get("collectors", {}).get(source_id, {}))
+
+    def save_collector_state(self, source_id, checkpoint):
+        if not isinstance(source_id, str) or not _CODE.fullmatch(source_id) or not isinstance(checkpoint, dict):
+            raise StorageError("invalid_collector_state")
+        try:
+            encoded = json.dumps(checkpoint, allow_nan=False)
+        except (ValueError, TypeError):
+            raise StorageError("invalid_collector_state") from None
+        if len(encoded.encode("utf-8")) > 2 * 1024 * 1024:
+            raise StorageError("collector_state_too_large")
+        def change(state):
+            state.setdefault("collectors", {})[source_id] = copy.deepcopy(checkpoint)
+        self._commit(change)
 
     def fail_detail(self, source_id, notice_id, code, now, retry_after=3600):
         now = _time(now)

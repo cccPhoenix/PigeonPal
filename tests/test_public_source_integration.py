@@ -101,7 +101,7 @@ class PublicPipelineTests(unittest.TestCase):
             try:
                 backend.store.sync_list("bksy", [item(2, link=True)], 100)
                 sources = {row["id"]: row for row in backend.source_status()["sources"]}
-                self.assertEqual(set(sources), {"yunfeng", "itc", "qsxy", "bksy"})
+                self.assertEqual(set(sources), {"yunfeng", "itc", "qsxy", "bksy", "xzzd"})
                 self.assertIn("本科生院", sources["bksy"]["title"])
                 self.assertIn("求是学院", sources["qsxy"]["title"])
                 self.assertFalse(sources["qsxy"]["requiresAuth"])

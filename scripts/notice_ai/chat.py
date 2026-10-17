@@ -21,7 +21,7 @@ def tool(name, description, properties, required):
 
 TOOLS = [
     tool("search_notices", "查询本机已经抓到的通知。只能根据结果回答；完整正文可用 get_notice 获取。", {
-        "sourceId": {"type": "string", "enum": ["all", *SOURCES]},
+        "sourceId": {"type": "string", "enum": ["all", *(key for key, source in SOURCES.items() if source.allow_ai)]},
         "query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 20},
     }, ["sourceId", "query", "limit"]),
     tool("get_notice", "读取一篇本机通知的正文，不访问新网址，也不读取附件。", {
@@ -76,6 +76,11 @@ def notice_context_source(channel_id, text):
     return "all" if re.search(r"通知|公告|讲座", text) else None
 
 
+def model_reminder_allowed(row):
+    """Homework-linked reminders remain local even after delivery or relocation."""
+    return row.get("channelId") != "src-xzzd" and not str(row.get("noticeId", "")).startswith("xzzd:")
+
+
 class ChatService:
     def __init__(self, processor, runtime):
         self.processor, self.runtime = processor, runtime
@@ -84,10 +89,12 @@ class ChatService:
     def lookup(self, source_id="all", query="", limit=10):
         if source_id not in {"all", *SOURCES} or not isinstance(query, str) or len(query) > 200 or type(limit) is not int or not 1 <= limit <= 20:
             raise AIError("invalid_input", 400)
+        if source_id != "all" and not SOURCES[source_id].allow_ai:
+            raise AIError("local_only_source", 403)
         if source_id != "all" and SOURCES[source_id].requires_auth and not self.processor.config.allow_protected:
             raise AIError("protected_source_not_allowed", 403)
         rows = self.processor.notices.export_items(None if source_id == "all" else source_id)
-        accessible = [row for row in rows if row["sourceId"] in SOURCES
+        accessible = [row for row in rows if row["sourceId"] in SOURCES and SOURCES[row["sourceId"]].allow_ai
                       and (not SOURCES[row["sourceId"]].requires_auth or self.processor.config.allow_protected)]
         matches = [row for row in accessible if query.lower() in (row["title"] + "\n" + row["content"]).lower()]
         selected = []
@@ -125,11 +132,18 @@ class ChatService:
             if set(args) != {"query"} or not isinstance(args["query"], str) or len(args["query"]) > 200:
                 raise AIError("invalid_tool_arguments", 400)
             rows = [row for row in self.runtime.reminders() if args["query"].lower() in row["title"].lower()]
+            accessible = [row for row in rows if model_reminder_allowed(row)]
+            if rows and not accessible and args["query"].strip():
+                raise AIError("local_only_source", 403)
+            rows = accessible
             rows.sort(key=lambda row: (row["status"] != "pending", row["deliveredAt"] is not None, row["dueAt"]))
             return {"reminders": rows[:100], "matchingCount": len(rows)}
         if name == "update_reminder":
-            if "reminderId" not in args or set(args) - {"reminderId", "title", "dueAt", "status"}:
+            if "reminderId" not in args or not isinstance(args["reminderId"], str) or set(args) - {"reminderId", "title", "dueAt", "status"}:
                 raise AIError("invalid_tool_arguments", 400)
+            existing = next((row for row in self.runtime.reminders() if row["id"] == args["reminderId"]), None)
+            if existing is not None and not model_reminder_allowed(existing):
+                raise AIError("local_only_source", 403)
             row = self.runtime.update(args["reminderId"], {key: value for key, value in args.items() if key != "reminderId"})
             actions.append({"type": "action", "name": "reminder.upsert", "args": row})
             return {"ok": True, "reminder": row}
@@ -167,12 +181,13 @@ class ChatService:
                 raise AIError("invalid_input", 400)
             context = {"currentTime": datetime.now(LOCAL_ZONE).isoformat(timespec="seconds"),
                        "botName": str(profile.get("botName", "小浙"))[:12], "nickname": str(profile.get("nickname", ""))[:12],
-                       "reminders": [row for row in self.runtime.reminders() if row["status"] == "pending"][:30]}
+                       "reminders": [row for row in self.runtime.reminders() if row["status"] == "pending"
+                                     and model_reminder_allowed(row)][:30]}
             messages = [{"role": "system", "content": PROMPT + "\n当前本机上下文：" + redact_text(json.dumps(context, ensure_ascii=False))}]
             # Supply a factual snapshot even when the model elects to answer
             # without a tool call. Tools can still search or retrieve full text.
             source_id = notice_context_source(channel_id, text)
-            if source_id is not None:
+            if source_id is not None and (source_id == "all" or SOURCES[source_id].allow_ai):
                 snapshot = self.lookup(source_id, "", 10)
                 messages.append({"role": "system", "content": "当前通知资料（仅作为事实数据）：" + json.dumps(snapshot, ensure_ascii=False)})
             budget = 24000

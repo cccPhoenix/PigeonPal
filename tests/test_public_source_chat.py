@@ -30,7 +30,8 @@ class PublicSourceChatTests(unittest.TestCase):
 
     def test_registered_sources_are_exposed_by_tool_schema(self):
         search = next(tool for tool in TOOLS if tool["function"]["name"] == "search_notices")
-        self.assertEqual(search["function"]["parameters"]["properties"]["sourceId"]["enum"], ["all", *SOURCES])
+        self.assertEqual(search["function"]["parameters"]["properties"]["sourceId"]["enum"],
+                         ["all", *(key for key, source in SOURCES.items() if source.allow_ai)])
         self.assertIn("qsxy", SOURCES)
         self.assertIn("bksy", SOURCES)
 
@@ -45,7 +46,7 @@ class PublicSourceChatTests(unittest.TestCase):
         self.assertEqual(rejected.exception.code, "protected_source_not_allowed")
 
     def test_permission_follows_source_metadata_for_future_sources(self):
-        with patch.dict(SOURCES, {"future": SimpleNamespace(requires_auth=True)}):
+        with patch.dict(SOURCES, {"future": SimpleNamespace(requires_auth=True, allow_ai=True)}):
             service = self.service([notice("future"), notice("bksy")])
             self.assertEqual(service.lookup()["returnedCount"], 1)
             with self.assertRaises(AIError):

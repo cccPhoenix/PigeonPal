@@ -11,6 +11,7 @@
 
 import { clock, dayLabel } from '../ui/format.js'
 import { analysisFields, decisionCopy } from './notice-summary.js'
+import { cleanHomework } from './homework.js'
 
 export const NOTICE_CATEGORIES = {
   academic: '学术报告', teaching: '教学教务', activity: '校园活动',
@@ -75,6 +76,17 @@ export function localAdapters(client) {
         offset = data.nextOffset
       } while (Number.isSafeInteger(offset) && offset > 0)
       return rows.map(row => {
+        if (channel.sourceId === 'xzzd') {
+          const homework = cleanHomework(row.homework)
+          return {
+            id: row.id, noticeId: row.id, revision: row.revision, sourceId: 'xzzd', real: true,
+            kind: 'homework', title: row.title, url: row.url, contentVersion: row.version,
+            publishedDate: row.publishedAt || '',
+            publishedAt: Date.parse(row.firstSeenAt) || Date.now(),
+            receivedAt: Date.parse(row.lastChangedAt || row.firstSeenAt),
+            analysisState: 'local_only', homework, deadlineAt: homework.deadlineAt,
+          }
+        }
         const result = row.analysis?.state === 'ready' ? row.analysis.result : null
         const linkOnly = row.state === 'skipped' || row.fetchable === false
         const flags = Array.isArray(row.qualityFlags) ? row.qualityFlags : []
@@ -109,6 +121,7 @@ export const LOCAL_CHANNELS = [
   { id: 'src-itc', sourceId: 'itc', title: 'ITC 通知', emoji: '💻', tint: '#eaf2ff', site: 'itc.zju.edu.cn', url: 'https://itc.zju.edu.cn/90618/list.psp', every: '每 5 分钟', requiresAuth: true },
   { id: 'src-qsxy', sourceId: 'qsxy', title: '求是学院通知', emoji: '🎓', tint: '#fff1e5', site: 'qsxy.zju.edu.cn', url: 'http://qsxy.zju.edu.cn/30845/list.psp', every: '每 5 分钟', requiresAuth: false },
   { id: 'src-bksy', sourceId: 'bksy', title: '本科生院通知', emoji: '📚', tint: '#f0ecff', site: 'bksy.zju.edu.cn', url: 'https://bksy.zju.edu.cn/28418/list.htm', every: '每 5 分钟', requiresAuth: false },
+  { id: 'src-xzzd', sourceId: 'xzzd', title: '学在浙大·作业', emoji: '📝', tint: '#eaf5f2', site: 'courses.zju.edu.cn', url: 'https://courses.zju.edu.cn/login', every: '每 5 分钟', requiresAuth: true, allowAi: false },
 ]
 
 // ---------------------------------------------------------------------------

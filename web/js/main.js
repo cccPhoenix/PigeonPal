@@ -4,6 +4,7 @@ import { markHTML, setMarkState, startGaze } from './mark/index.js'
 import { createAIChat, buildChatHistory, GREETING } from './services/chat.js'
 import { startFeed, localAdapters, noticeCopy, eventPhrase, NOTICE_CATEGORIES, LOCAL_CHANNELS } from './services/sources.js'
 import { analysisFields, decisionCopy } from './services/notice-summary.js'
+import { homeworkDetailHTML, isHomework } from './services/homework.js'
 import { systemNotify } from './services/scheduler.js'
 import { createSidebar } from './ui/sidebar.js'
 import { createHeader } from './ui/header.js'
@@ -164,7 +165,7 @@ async function flush(ch) {
   const q = queues.get(ch)
   if (!q) return
   queues.delete(ch)
-  const history = buildChatHistory(store.state.messages[ch].slice(0, q.firstIndex), store.state.profile)
+  const history = buildChatHistory(store.state.messages[ch].slice(0, q.firstIndex), store.state.profile, store.state.reminders)
   await run(ch, services.chat.respond({ text: q.texts.join('\n'), channelId: ch, state: store.state,
     requestId: q.requestId, quoteId: q.quoteId, history }))
 }
@@ -234,6 +235,12 @@ async function openNotice(m, opener) {
   let detail = null
   if (item.real && item.noticeId) {
     try { detail = await apiClient.notice(item.noticeId) } catch (error) { toast(apiErrorText(error)); return }
+  }
+  if (isHomework(item)) {
+    const box = dialog(homeworkDetailHTML(item, detail || {}), { opener })
+    box.classList.add('notice-dialog')
+    box.querySelector('[data-x="close"]').addEventListener('click', closeOverlay)
+    return
   }
   const current = detail ? { ...item, ...analysisFields(detail.analysis) } : item
   const box = dialog(`<h3>${item.real ? '通知详情' : escapeHtml(item.title)}</h3>
@@ -316,8 +323,8 @@ ${markHTML({ look: p.look, image: p.look === 'image' ? p.image : null, size: 88,
 <div class="ch-icon" style="--tint:${escapeHtml(c.tint)};width:64px;height:64px;border-radius:20px;font-size:32px;margin:4px auto 10px">${escapeHtml(c.emoji)}</div>
 <h3>${escapeHtml(c.title)}</h3><p>${escapeHtml(p.botName)}帮你盯着这个来源</p>
 <dl class="kv"><dt>来源</dt><dd>${escapeHtml(c.site || '—')}</dd><dt>检查</dt><dd>${escapeHtml(c.every)}</dd><dt>通知</dt><dd>${c.notify === 'mute' ? '静音' : '有新消息就叫我'}</dd></dl>
-${c.sourceId ? '<dl class="kv"><dt>采集状态</dt><dd data-source-state></dd><dt>本机通知</dt><dd data-source-count></dd><dt>最近检查</dt><dd data-source-checked></dd><dt>通知整理</dt><dd data-ai-state></dd></dl>' : ''}
-<div class="pills">${c.requiresAuth ? `<button class="pill" data-identity>${icon('key', 15)}<span data-auth-label>去认证</span></button>` : ''}${c.sourceId ? `<button class="pill" data-api-settings>${icon('settings', 15)}API 设置</button>` : ''}<button class="pill" data-mute>${icon('bell', 15)}${c.notify === 'mute' ? '取消静音' : '静音'}</button></div>
+${c.sourceId ? `<dl class="kv"><dt>采集状态</dt><dd data-source-state></dd><dt>${c.sourceId === 'xzzd' ? '本机作业' : '本机通知'}</dt><dd data-source-count></dd><dt>最近检查</dt><dd data-source-checked></dd><dt>${c.sourceId === 'xzzd' ? '模型整理' : '通知整理'}</dt><dd data-ai-state></dd></dl>` : ''}
+<div class="pills">${c.requiresAuth ? `<button class="pill" data-identity>${icon('key', 15)}<span data-auth-label>去认证</span></button>` : ''}${c.sourceId && c.allowAi !== false ? `<button class="pill" data-api-settings>${icon('settings', 15)}API 设置</button>` : ''}<button class="pill" data-mute>${icon('bell', 15)}${c.notify === 'mute' ? '取消静音' : '静音'}</button></div>
 </div>`, { onClose: () => { stopped = true; clearTimeout(timer) } })
     if (c.sourceId) {
       const drawSource = () => {
@@ -327,10 +334,10 @@ ${c.sourceId ? '<dl class="kv"><dt>采集状态</dt><dd data-source-state></dd><
         const count = Number.isSafeInteger(source?.totalCount) ? source.totalCount : null
         const complete = Number.isSafeInteger(source?.completeCount) ? source.completeCount : null
         const skipped = Number.isSafeInteger(source?.skippedCount) ? source.skippedCount : 0
-        pop.querySelector('[data-source-count]').textContent = count === null ? '—' : `${count} 条${complete === null ? '' : ` · ${complete} 篇正文`}${skipped ? ` · ${skipped} 条仅链接` : ''}`
+        pop.querySelector('[data-source-count]').textContent = count === null ? '—' : c.sourceId === 'xzzd' ? `${count} 项作业` : `${count} 条${complete === null ? '' : ` · ${complete} 篇正文`}${skipped ? ` · ${skipped} 条仅链接` : ''}`
         const checked = new Date(source?.lastCheckedAt)
         pop.querySelector('[data-source-checked]').textContent = source?.lastCheckedAt && Number.isFinite(checked.getTime()) ? checked.toLocaleString('zh-CN', { hour12: false }) : '—'
-        pop.querySelector('[data-ai-state]').textContent = !aiStatus?.configured ? '等待配置 API' : aiStatus.error
+        pop.querySelector('[data-ai-state]').textContent = c.allowAi === false ? '本地作业信息，无需模型' : !aiStatus?.configured ? '等待配置 API' : aiStatus.error
           ? apiErrorText({ code: aiStatus.error }) : aiStatus.counts?.processing ? '正在整理通知' : aiStatus.automatic ? '自动整理已开启' : '仅手动整理'
         const label = pop.querySelector('[data-auth-label]')
         if (label) label.textContent = !source || ['auth_required', 'auth_expired'].includes(source.state) ? '去认证' : '身份认证'

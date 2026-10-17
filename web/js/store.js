@@ -5,6 +5,7 @@ import { newId } from './reminders.js'
 import { hasLook } from './mark/looks.js'
 import { LOCAL_CHANNELS } from './services/sources.js'
 import { DECISION_FIELDS, decisionCopy } from './services/notice-summary.js'
+import { cleanHomework, isHomework } from './services/homework.js'
 
 export const STORAGE_KEY = 'pigeonpal.v1'
 const KINDS = ['text', 'notice', 'reminder']
@@ -91,6 +92,7 @@ function cleanItem(item) {
   for (const key of DECISION_FIELDS) if (typeof item[key] === 'string') out[key] = item[key].slice(0, 600)
   if (typeof item.bodyStatus === 'string') out.bodyStatus = item.bodyStatus.slice(0, 600)
   if (item.real === true) out.real = true
+  if (isHomework(out)) { out.homework = cleanHomework(item.homework); out.analysisState = 'local_only' }
   if (Number.isSafeInteger(item.contentVersion)) out.contentVersion = item.contentVersion
   for (const key of ['audience', 'notes']) if (Array.isArray(item[key])) out[key] = item[key].filter(value => typeof value === 'string').slice(0, 20).map(value => value.slice(0, 300))
   if (Array.isArray(item.todos)) out.todos = item.todos.filter(row => typeof row?.text === 'string').slice(0, 20).map(row => ({ text: row.text.slice(0, 300), dueAt: typeof row.dueAt === 'string' ? row.dueAt.slice(0, 40) : null }))
@@ -134,7 +136,7 @@ export function createStore(storage = globalThis.localStorage) {
     upsertNotice(channelId, fields, { unread = false } = {}) {
       const existing = state.messages[channelId].find(message => message.kind === 'notice' && message.item?.noticeId === fields.item.noticeId)
       if (!existing) return { message: this.addMessage(channelId, fields, { unread }), created: true }
-      const revised = existing.item.contentVersion !== fields.item.contentVersion
+      const revised = existing.item.contentVersion !== fields.item.contentVersion || (isHomework(fields.item) && existing.item.revision !== fields.item.revision)
       if (unread && existing.item.revision !== fields.item.revision) state.unread[channelId] = (state.unread[channelId] ?? 0) + 1
       Object.assign(existing, fields)
       save()

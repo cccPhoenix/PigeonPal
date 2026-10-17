@@ -26,6 +26,12 @@ from .zjuam import AUTH_USER_AGENT, PUBLIC_KEY_URL, _Page, _is_login_path
 
 
 CAS_HOST = "zjuam.zju.edu.cn"
+XZZD_HOST = "courses.zju.edu.cn"
+IDENTITY_HOST = "identity.zju.edu.cn"
+XZZD_LOGIN_PATH = "/login"
+IDENTITY_CAS_PATH = "/auth/realms/zju/protocol/cas/login"
+IDENTITY_BROKER_PATH = "/auth/realms/zju/broker/cas-client/login"
+IDENTITY_CALLBACK_PATH = "/auth/realms/zju/broker/cas-client/endpoint"
 MAX_BYTES = 1024 * 1024
 ERROR_CODES = {
     "auth_required", "cancelled", "network_error", "campus_network_required",
@@ -81,8 +87,11 @@ def _cookie_key(cookie):
 class _TransactionJar(http.cookiejar.CookieJar):
     """Keep track of cookies refreshed by CAS, rather than by a source host."""
 
-    def __init__(self, host):
-        super().__init__(_CookiePolicy({CAS_HOST, host}, parent_domain=True))
+    def __init__(self, host, *, identity_bridge=False):
+        hosts = {CAS_HOST, host}
+        if identity_bridge:
+            hosts.add(IDENTITY_HOST)
+        super().__init__(_CookiePolicy(hosts, parent_domain=True))
         self.cas_updates = {}
 
     def extract_cookies(self, response, request):
@@ -181,10 +190,46 @@ class SiteSessionProvider:
             self._campus = None
 
     @staticmethod
+    def _identity_bridge(endpoint):
+        target = urlsplit(endpoint)
+        return target.hostname == XZZD_HOST and target.path == XZZD_LOGIN_PATH
+
+    @staticmethod
+    def _identity_url(parts, endpoint, *, service_callback=False):
+        """Allow only the observed LMS CAS broker, never arbitrary IdP routes."""
+        if (
+            parts.scheme != "https" or parts.hostname != IDENTITY_HOST
+            or parts.port not in {None, 443} or parts.username or parts.password
+            or parts.fragment
+        ):
+            raise ValueError()
+        query = parse_qs(parts.query, keep_blank_values=True)
+        if any(len(values) != 1 or not values[0] for values in query.values()):
+            raise ValueError()
+        if service_callback:
+            if parts.path != IDENTITY_CALLBACK_PATH or set(query) != {"state"}:
+                raise ValueError()
+            return
+        if parts.path == IDENTITY_CAS_PATH:
+            if not {"service"} <= set(query) <= {"service", "locale", "ts", "ui_locales"}:
+                raise ValueError()
+            if query["service"][0] != endpoint:
+                raise ValueError()
+        elif parts.path == IDENTITY_BROKER_PATH:
+            if set(query) != {"client_id", "session_code", "tab_id"}:
+                raise ValueError()
+        elif parts.path == IDENTITY_CALLBACK_PATH:
+            if not {"state"} <= set(query) <= {"state", "ticket"}:
+                raise ValueError()
+        else:
+            raise ValueError()
+
+    @staticmethod
     def _safe_url(url, endpoint):
         try:
             parts = urlsplit(url)
             target = urlsplit(endpoint)
+            identity_bridge = SiteSessionProvider._identity_bridge(endpoint)
             if parts.username or parts.password or parts.fragment:
                 raise ValueError()
             if parts.hostname == target.hostname:
@@ -201,13 +246,17 @@ class SiteSessionProvider:
                 if len(services) != 1:
                     raise ValueError()
                 service = urlsplit(services[0])
-                if (
+                if identity_bridge:
+                    SiteSessionProvider._identity_url(service, endpoint, service_callback=True)
+                elif (
                     service.hostname != target.hostname or service.username or service.password
                     or service.scheme not in {"http", "https"}
                     or service.port not in {None, 80 if service.scheme == "http" else 443}
                     or service.path != target.path or service.query or service.fragment
                 ):
                     raise ValueError()
+            elif identity_bridge and parts.hostname == IDENTITY_HOST:
+                SiteSessionProvider._identity_url(parts, endpoint)
             else:
                 raise ValueError()
             return urlunsplit(parts._replace(fragment=""))
@@ -229,7 +278,8 @@ class SiteSessionProvider:
             epoch = self._epochs.get(source_id, 0)
         endpoint = self.endpoints[source_id]
         host = urlsplit(endpoint).hostname
-        jar = _TransactionJar(host)
+        identity_bridge = self._identity_bridge(endpoint)
+        jar = _TransactionJar(host, identity_bridge=identity_bridge)
         for cookie in campus.cookies:
             if cookie.domain.lstrip(".").lower() in {CAS_HOST, "zju.edu.cn"}:
                 jar.set_cookie(copy.copy(cookie))
@@ -283,7 +333,7 @@ class SiteSessionProvider:
                         raise SiteSessionError("invalid_sso_page")
                     return data.decode("utf-8", errors="strict")
 
-            for _ in range(8):
+            for _ in range(10 if identity_bridge else 8):
                 check_current()
                 current = self._safe_url(current, endpoint)
                 remaining = deadline - self.clock()
@@ -376,10 +426,15 @@ class SiteSessionProvider:
                             raise SiteSessionError("invalid_sso_page")
                         if login_form:
                             raise SiteSessionError("auth_required")
+                        if urlsplit(current).hostname != host:
+                            # An IdP error/consent page is not a source session.
+                            raise SiteSessionError("invalid_sso_page")
                         result_jar = http.cookiejar.CookieJar(_CookiePolicy({host}))
                         for cookie in jar:
                             if cookie.domain.lstrip(".").lower() == host:
                                 result_jar.set_cookie(copy.copy(cookie))
+                        if identity_bridge and not any(not cookie.is_expired() for cookie in result_jar):
+                            raise SiteSessionError("auth_required")
                         last_finished = self.clock()
                         session = AuthSession(result_jar, last_request_monotonic=last_finished)
                         with self._lock:
