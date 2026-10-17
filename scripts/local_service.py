@@ -177,7 +177,12 @@ class LocalBackend:
             print("crawler: crawler_worker_error", file=sys.stderr, flush=True)
 
     def _run_due_sources(self):
-        for runtime in self.engine.runtimes.values():
+        # A new or newly authenticated homework channel must not wait behind
+        # every public site's paced detail fetches. Keep normal/backoff cadence.
+        runtimes = sorted(self.engine.runtimes.values(), key=lambda runtime: not (
+            runtime.source.kind == "homework" and runtime.state in {"idle", "auth_required"}
+        ))
+        for runtime in runtimes:
             if self.stop.is_set() or time.time() < runtime.next_due:
                 continue
             if runtime.source.requires_auth and self.auth.campus_session() is not None:
