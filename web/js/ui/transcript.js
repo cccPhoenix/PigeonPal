@@ -1,8 +1,8 @@
 import { markHTML, setMarkState } from '../mark/index.js'
 import { icon } from './icons.js'
-import { escapeHtml, richText, plain, clock, whenLabel } from './format.js'
+import { escapeHtml, richText, plain, clock, whenLabel, personalize } from './format.js'
 import { eventPhrase, NOTICE_CATEGORIES } from '../services/sources.js'
-import { isHomework } from '../services/homework.js'
+import { isHomework, isHomeworkCard, orderHomeworkMessages, reorderHomeworkNodes } from '../services/homework.js'
 
 const GROUP_GAP = 5 * 60_000
 const DIVIDER_GAP = 30 * 60_000
@@ -31,7 +31,7 @@ export function createTranscript({ root, jump, store, onAction }) {
     const reminder = store.state.reminders.find(r => (r.noticeId === m.id || r.noticeId === item.noticeId) && r.status === 'pending')
     const time = item.eventAt ? `${eventPhrase(item.eventAt)}${item.eventEnd ? ` – ${clock(item.eventEnd)}` : ''}` : ''
     return `<div class="card">
-  <div class="card-src"><span>${escapeHtml(channel?.emoji ?? '🔔')}</span><span>${escapeHtml(channel?.title ?? '')}</span><span>·</span><span>${homework ? '本地作业信息' : item.real ? (item.analysisState === 'ready' ? '已整理' : '原站通知') : '示例'}</span></div>
+  <div class="card-src"><span>${escapeHtml(channel?.emoji ?? '🔔')}</span><span>${escapeHtml(channel?.title ?? '')}</span><span>·</span><span>${homework ? (m.kind === 'reminder' ? '作业截止提醒' : '本地作业信息') : item.real ? (item.analysisState === 'ready' ? '已整理' : '原站通知') : '示例'}</span></div>
   ${homework ? '' : item.real ? `<details><summary>原标题</summary><div>${escapeHtml(item.title ?? '')}</div></details>` : `<div class="card-title">${escapeHtml(item.title ?? '')}</div>`}
   ${!item.real && NOTICE_CATEGORIES[item.category] ? `<div class="card-meta"><span>${escapeHtml(NOTICE_CATEGORIES[item.category])}</span></div>` : ''}
   ${!homework && item.real && !item.publishedDate ? '<div class="card-meta"><span>原站发布日期待补齐</span></div>' : ''}
@@ -59,16 +59,16 @@ export function createTranscript({ root, jump, store, onAction }) {
   function rowHTML(m, { first, live, enter }) {
     const user = m.role === 'user'
     const quoted = m.quoteId && store.message(m.quoteId)
-    const cls = ['row', user ? 'user' : 'bot', m.kind === 'notice' && m.item?.real ? 'notice-row' : '', first ? 'first' : '', enter ? 'enter' : ''].filter(Boolean).join(' ')
+    const cls = ['row', user ? 'user' : 'bot', (m.kind === 'notice' || isHomework(m.item)) && m.item?.real ? 'notice-row' : '', first ? 'first' : '', enter ? 'enter' : ''].filter(Boolean).join(' ')
     return `<div class="${cls}" data-id="${escapeHtml(m.id)}" data-role="${m.role}">
 ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}</div>`}
 <div class="stack">
   ${quoted ? `<button class="quote-ref" data-act="jump" data-id="${escapeHtml(quoted.id)}">${icon('reply', 14)}<span>${escapeHtml(plain(quoted.text, profile()))}</span></button>` : ''}
   <div class="line">
-    <div class="bubble">${isHomework(m.item) ? escapeHtml(m.text).replace(/\n/g, '<br>') : richText(m.text, profile())}</div>
+    <div class="bubble">${isHomework(m.item) ? escapeHtml(personalize(m.text, profile())).replace(/\n/g, '<br>') : richText(m.text, profile())}</div>
     <div class="tools"><time>${clock(m.at)}</time><button class="tool" data-act="copy" data-id="${escapeHtml(m.id)}" aria-label="复制">${icon('copy', 16)}</button><button class="tool" data-act="reply" data-id="${escapeHtml(m.id)}" aria-label="引用回复">${icon('reply', 16)}</button></div>
   </div>
-  ${m.kind === 'notice' ? noticeCard(m) : ''}
+  ${m.kind === 'notice' || isHomework(m.item) ? noticeCard(m) : ''}
   ${m.kind === 'reminder' ? reminderPills(m) : ''}
 </div>
 </div>`
@@ -87,11 +87,11 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
     typingRow = null
     unseen = 0
     jump.hidden = true
-    const list = store.state.messages[id] ?? []
+    const list = orderHomeworkMessages(store.state.messages[id] ?? [])
     let html = ''
     let prev = null
     list.forEach(m => {
-      if (!prev || m.at - prev.at > DIVIDER_GAP) html += dividerHTML(m.at)
+      if (!isHomeworkCard(m) && (!prev || m.at - prev.at > DIVIDER_GAP)) html += dividerHTML(m.at)
       const first = startsGroup(prev, m) || (prev && m.at - prev.at > DIVIDER_GAP)
       html += rowHTML(m, { first, live: false })
       prev = m
@@ -111,7 +111,7 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
     const rows = inner.querySelectorAll('.row')
     const prevRow = [...rows].filter(r => r !== typingRow).at(-1)
     const prev = prevRow && store.message(prevRow.dataset.id)
-    const divider = !prev || m.at - prev.at > DIVIDER_GAP
+    const divider = !isHomeworkCard(m) && (!prev || m.at - prev.at > DIVIDER_GAP)
     const first = divider || startsGroup(prev, m)
 
     let carried = null
@@ -133,6 +133,7 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
       const live = inner.querySelector('.mk[data-live]')
       if (live) setMarkState(live, 'idle')
     }
+    if (isHomeworkCard(m)) reorderHomeworkNodes(inner, id => store.message(id))
     if (stick) requestAnimationFrame(() => toBottom(true))
     else { unseen += 1; showJump() }
   }
@@ -165,7 +166,7 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
     const row = inner?.querySelector(`.row[data-id="${CSS.escape(messageId)}"]`)
     const m = store.message(messageId)
     if (!row || !m) return
-    const pills = row.querySelector('.card .pills, .pills.under')
+    const pills = row.querySelector(m.kind === 'notice' ? '.card .pills' : '.pills.under')
     const fresh = toNode(m.kind === 'notice' ? noticeCard(m) : reminderPills(m)).firstElementChild
     const next = m.kind === 'notice' ? fresh?.querySelector('.pills') : fresh
     if (pills && next) pills.replaceWith(next)
@@ -174,9 +175,10 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
   function refreshNotice(message) {
     const row = inner?.querySelector(`.row[data-id="${CSS.escape(message.id)}"]`)
     if (!row) return
-    row.querySelector('.bubble').innerHTML = isHomework(message.item) ? escapeHtml(message.text).replace(/\n/g, '<br>') : richText(message.text, profile())
+    row.querySelector('.bubble').innerHTML = isHomework(message.item) ? escapeHtml(personalize(message.text, profile())).replace(/\n/g, '<br>') : richText(message.text, profile())
     const card = row.querySelector('.card')
     if (card) card.replaceWith(toNode(noticeCard(message)))
+    if (isHomeworkCard(message)) reorderHomeworkNodes(inner, id => store.message(id))
   }
 
   function flash(messageId) {

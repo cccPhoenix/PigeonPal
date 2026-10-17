@@ -29,6 +29,7 @@ from notice_ai.chat import ChatService
 from notice_ai.client import ModelClient
 from notice_ai.config import AISettings
 from notice_ai.runtime import RuntimeStore
+from notice_ai.homework import reconcile_homework, deadline_order_ms
 from notice_ai.schema import AIError
 from notice_ai.service import NoticeProcessor
 
@@ -82,7 +83,9 @@ class LocalBackend:
         failed = False
         while not self.stop.is_set():
             try:
-                self.runtime.tick()
+                if time.time() >= next_reconcile:
+                    reconcile_homework(self.runtime, self.store.export_items("xzzd"))
+                self.runtime.tick(homework_lookup=self.store.get_notice)
                 if time.time() >= next_reconcile:
                     self.ai.reconcile_deadlines()
                     next_reconcile = time.time() + 30
@@ -129,6 +132,8 @@ class LocalBackend:
         if not 1 <= limit <= 100 or offset < 0:
             raise AIError("invalid_input", 400)
         rows = self.store.export_items(source_id)
+        if source_id == "xzzd":
+            rows.sort(key=lambda row: deadline_order_ms(row.get('homework', {}).get('deadlineAt')) or float('-inf'), reverse=True)
         items = []
         for row in rows[offset:offset + limit]:
             items.append({key: row[key] for key in ("id", "sourceId", "title", "url", "publishedAt", "state", "version", "contentHash", "lastChangedAt", "firstSeenAt")})

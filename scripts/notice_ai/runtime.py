@@ -254,7 +254,7 @@ class RuntimeStore:
                               "src-" + notice["sourceId"], notice["id"], identity=identity, automatic=True)
             self.commit(lambda state: state["reminders"][row["id"]].update(deadlineValue=result["deadlineAt"], sourceHash=notice.get("contentHash")), queue_ids=())
 
-    def tick(self):
+    def tick(self, *, homework_lookup=None):
         now = int(time.time() * 1000)
         with self.lock:
             due_entries, seen = [], set()
@@ -271,10 +271,28 @@ class RuntimeStore:
                     seen.add(identity)
             if not due_entries:
                 return
+            # Read only current local metadata at dispatch, so a newly submitted
+            # task or postponed deadline cannot leak through a stale queue entry.
+            try:
+                if homework_lookup is not None:
+                    from .homework import reconcile_homework, POLICY
+                    for _, identity in due_entries:
+                        row = self.state['reminders'][identity]
+                        if row.get('policy') == POLICY and row.get('automatic'):
+                            notice = homework_lookup(row['noticeId'])
+                            if notice is not None:
+                                reconcile_homework(self, [notice])
+            except Exception:
+                for entry in due_entries:
+                    heapq.heappush(self._due_heap, entry)
+                raise
             def mutate(state):
                 for _, identity in due_entries:
                     row = state['reminders'][identity]
                     if row['status'] != 'pending' or row['deliveredAt'] is not None or row['dueAt'] > now:
+                        continue
+                    if row.get('automatic') and row.get('policy') == 'homework-six-hour' and row.get('homeworkDeadlineMs', 0) <= now:
+                        row.update(status='cancelled', cancelReason='homework_updated', updatedAt=now)
                         continue
                     row['deliveredAt'] = now
                     row['updatedAt'] = now
@@ -282,10 +300,14 @@ class RuntimeStore:
                     text = '⏰ {nickname}，' + row['title'] + '到时间啦。'
                     if row.get('deadlineValue'):
                         text += '\n原通知截止日期／时间：' + row['deadlineValue'] + '。具体要求请查看原文。'
+                    if row.get('homeworkItem'):
+                        text = ('⏰ {nickname}，这份作业快到截止时间啦，记得安排时间哦～' if row.get('automatic')
+                                else '⏰ {nickname}，你为这份作业设置的提醒到时间啦。')
                     event_id = 'event-' + str(uuid.uuid5(uuid.NAMESPACE_URL, row['id'] + ':' + str(row['dueAt'])))
                     state['events'].append({'id': event_id, 'sequence': state['sequence'],
                         'channelId': row['channelId'], 'at': now,
-                        'kind': 'reminder', 'text': text, 'reminderId': row['id']})
+                        'kind': 'reminder', 'text': text, 'reminderId': row['id'],
+                        **({'item': copy.deepcopy(row['homeworkItem'])} if row.get('homeworkItem') else {})})
                 state['events'] = state['events'][-2000:]
             try:
                 self.commit(mutate, queue_ids=seen)

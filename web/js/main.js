@@ -4,7 +4,7 @@ import { markHTML, setMarkState, startGaze } from './mark/index.js'
 import { createAIChat, buildChatHistory, GREETING } from './services/chat.js'
 import { startFeed, localAdapters, noticeCopy, eventPhrase, NOTICE_CATEGORIES, LOCAL_CHANNELS } from './services/sources.js'
 import { analysisFields, decisionCopy } from './services/notice-summary.js'
-import { homeworkDetailHTML, isHomework } from './services/homework.js'
+import { homeworkDetailHTML, isHomework, homeworkReminderMessage } from './services/homework.js'
 import { systemNotify } from './services/scheduler.js'
 import { createSidebar } from './ui/sidebar.js'
 import { createHeader } from './ui/header.js'
@@ -490,7 +490,7 @@ async function refreshRuntime() {
   runtimePolling = true
   try {
     if (!runtimeInitialized) {
-      const legacy = store.state.reminders.filter(reminder => !reminder.id.startsWith('rem-ddl-') && !reminder.id.startsWith('rem-chat-'))
+      const legacy = store.state.reminders.filter(reminder => !reminder.id.startsWith('rem-ddl-') && !reminder.id.startsWith('rem-chat-') && !reminder.id.startsWith('rem-hw-'))
       for (let index = 0; index < legacy.length; index += 200) await apiClient.importReminders(legacy.slice(index, index + 200))
       runtimeInitialized = true
     }
@@ -499,8 +499,8 @@ async function refreshRuntime() {
     for (const event of events.events || []) {
       if (store.message(event.id)) continue
       const channelId = store.channel(event.channelId) ? event.channelId : 'bot'
-      const message = store.addMessage(channelId, { id: event.id, role: 'bot', kind: 'reminder', text: event.text,
-        at: event.at, reminderId: event.reminderId }, { unread: channelId !== active })
+      const fields = isHomework(event.item) ? homeworkReminderMessage(event) : { id: event.id, kind: 'reminder', text: event.text, at: event.at, reminderId: event.reminderId }
+      const message = store.addMessage(channelId, { ...fields, role: 'bot' }, { unread: channelId !== active })
       if (Date.now() - event.at < 60_000) announce(channelId, store.state.profile.botName, plain(message.text, store.state.profile))
     }
     if (Number.isSafeInteger(events.cursor) && events.cursor >= 0) store.setEventCursor(events.cursor)

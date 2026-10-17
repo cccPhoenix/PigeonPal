@@ -75,3 +75,45 @@ ${metadata.openAt ? `<p>开放：${escapeHtml(homeworkTime(metadata.openAt))}</p
 ${attachments.length ? `<div class="note">附件：${attachments.join('、')}</div>` : ''}
 <div class="btns">${url ? `<a class="btn primary" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" style="display:inline-grid;place-items:center;text-decoration:none">打开官方作业入口</a>` : '<span class="muted">官方作业入口暂不可用</span>'}<button class="btn" data-x="close">好的</button></div>`
 }
+
+
+// Only ordinary homework slots are sorted: conversations and six-hour reposts
+// keep their chronological positions. Date-only values are ordering keys only.
+export const isHomeworkCard = message => message?.kind === 'notice' && isHomework(message.item)
+export function orderHomeworkMessages(messages) {
+  const deadline = message => {
+    const value = cleanTime(message.item?.homework?.deadlineAt)
+    return value ? Date.parse(value.includes('T') ? value : `${value}T00:00:00+08:00`) : -Infinity
+  }
+  const cards = messages.filter(isHomeworkCard).sort((a, b) => {
+    const left = deadline(a), right = deadline(b)
+    return left === right ? 0 : right - left
+  })
+  let index = 0
+  return messages.map(message => isHomeworkCard(message) ? cards[index++] : message)
+}
+
+export function homeworkReminderMessage(event) {
+  return { id: event.id, kind: 'reminder', text: `${event.text}\n\n${homeworkCopy(event.item)}`,
+    item: event.item, at: event.at, reminderId: event.reminderId }
+}
+
+
+// Reuse existing DOM nodes when ordering live cards, including their avatars.
+export function reorderHomeworkNodes(container, getMessage, doc = document) {
+  const nodes = [...container.querySelectorAll('.row')].filter(node => isHomeworkCard(getMessage(node.dataset.id)))
+  const ordered = orderHomeworkMessages(nodes.map(node => getMessage(node.dataset.id)))
+  if (ordered.every((message, index) => message.id === nodes[index].dataset.id)) return
+  const byId = new Map(nodes.map(node => [node.dataset.id, node]))
+  const markers = nodes.map(node => {
+    const marker = doc.createComment('homework-slot')
+    container.insertBefore(marker, node)
+    return marker
+  })
+  ordered.forEach((message, index) => {
+    const node = byId.get(message.id)
+    if (container.moveBefore) container.moveBefore(node, markers[index])
+    else container.insertBefore(node, markers[index])
+    markers[index].remove()
+  })
+}

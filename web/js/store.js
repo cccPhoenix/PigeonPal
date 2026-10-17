@@ -70,7 +70,7 @@ export function hydrate(raw) {
       .map(m => ({ id: m.id, channelId: channel.id, role: m.role, kind: m.kind, text: m.role === 'bot' ? Array.from(m.text).slice(0, 20000).join('') : m.text.slice(0, 4000), at: m.at,
         ...(typeof m.quoteId === 'string' ? { quoteId: m.quoteId } : {}),
         ...(typeof m.reminderId === 'string' ? { reminderId: m.reminderId } : {}),
-        ...(m.kind === 'notice' && m.item && typeof m.item === 'object' ? { item: cleanItem(m.item) } : {}) }))
+        ...(['notice', 'reminder'].includes(m.kind) && m.item && typeof m.item === 'object' ? { item: cleanItem(m.item) } : {}) }))
     for (const message of fresh.messages[channel.id]) {
       if (message.kind === 'notice' && message.item?.real) message.text = decisionCopy(message.item)
     }
