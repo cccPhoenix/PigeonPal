@@ -1,7 +1,6 @@
 import { markHTML, setMarkState } from '../mark/index.js'
 import { icon } from './icons.js'
 import { escapeHtml, richText, plain, clock, whenLabel } from './format.js'
-import { eventPhrase, NOTICE_CATEGORIES } from '../services/sources.js'
 
 const GROUP_GAP = 5 * 60_000
 const DIVIDER_GAP = 30 * 60_000
@@ -20,27 +19,7 @@ export function createTranscript({ root, jump, store, onAction }) {
   const toBottom = (smooth = false) => root.scrollTo({ top: root.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
 
   function startsGroup(prev, m) {
-    return !prev || prev.role !== m.role || m.at - prev.at > GROUP_GAP || m.kind === 'notice' || prev.kind === 'notice' || m.kind === 'reminder'
-  }
-
-  function noticeCard(m) {
-    const item = m.item ?? {}
-    const channel = store.channel(m.channelId)
-    const reminder = store.state.reminders.find(r => (r.noticeId === m.id || r.noticeId === item.noticeId) && r.status === 'pending')
-    const time = item.eventAt ? `${eventPhrase(item.eventAt)}${item.eventEnd ? ` – ${clock(item.eventEnd)}` : ''}` : ''
-    return `<div class="card">
-  <div class="card-src"><span>${escapeHtml(channel?.emoji ?? '🔔')}</span><span>${escapeHtml(channel?.title ?? '')}</span><span>·</span><span>${item.real ? (item.analysisState === 'ready' ? '已整理' : '原站通知') : '示例'}</span></div>
-  ${item.real ? `<details><summary>原标题</summary><div>${escapeHtml(item.title ?? '')}</div></details>` : `<div class="card-title">${escapeHtml(item.title ?? '')}</div>`}
-  ${!item.real && NOTICE_CATEGORIES[item.category] ? `<div class="card-meta"><span>${escapeHtml(NOTICE_CATEGORIES[item.category])}</span></div>` : ''}
-  ${item.real && !item.publishedDate ? '<div class="card-meta"><span>原站发布日期待补齐</span></div>' : ''}
-  ${!item.real && (time || item.where) ? `<div class="card-meta">${time ? `<div>${icon('clock', 15)}<span>${escapeHtml(time)}</span></div>` : ''}${item.where ? `<div>${icon('pin', 15)}<span>${escapeHtml(item.where)}</span></div>` : ''}</div>` : ''}
-  <div class="pills">
-    <button class="pill" data-act="open-notice" data-id="${escapeHtml(m.id)}">${icon('link', 15)}查看原文</button>
-    ${item.real || item.eventAt && item.eventAt > Date.now() || reminder
-      ? `<button class="pill${reminder ? ' on' : ''}" data-act="remind-notice" data-id="${escapeHtml(m.id)}">${icon('bell', 15)}${reminder ? `已提醒 · ${escapeHtml(whenLabel(reminder.dueAt))}` : '提醒我'}</button>`
-      : ''}
-  </div>
-</div>`
+    return !prev || prev.role !== m.role || m.at - prev.at > GROUP_GAP || m.kind === 'reminder'
   }
 
   function reminderPills(m) {
@@ -57,7 +36,8 @@ export function createTranscript({ root, jump, store, onAction }) {
   function rowHTML(m, { first, live, enter }) {
     const user = m.role === 'user'
     const quoted = m.quoteId && store.message(m.quoteId)
-    const cls = ['row', user ? 'user' : 'bot', m.kind === 'notice' && m.item?.real ? 'notice-row' : '', first ? 'first' : '', enter ? 'enter' : ''].filter(Boolean).join(' ')
+    const noticeRef = m.noticeId && store.notice(m.noticeId)
+    const cls = ['row', user ? 'user' : 'bot', first ? 'first' : '', enter ? 'enter' : ''].filter(Boolean).join(' ')
     return `<div class="${cls}" data-id="${escapeHtml(m.id)}" data-role="${m.role}">
 ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}</div>`}
 <div class="stack">
@@ -66,7 +46,7 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
     <div class="bubble">${richText(m.text, profile())}</div>
     <div class="tools"><time>${clock(m.at)}</time><button class="tool" data-act="copy" data-id="${escapeHtml(m.id)}" aria-label="复制">${icon('copy', 16)}</button><button class="tool" data-act="reply" data-id="${escapeHtml(m.id)}" aria-label="引用回复">${icon('reply', 16)}</button></div>
   </div>
-  ${m.kind === 'notice' ? noticeCard(m) : ''}
+  ${noticeRef ? `<button class="quote-ref" data-act="goto-notice" data-id="${escapeHtml(m.id)}">${icon(user ? 'attach' : 'bell', 14)}<span>${user ? `通知附件 · ${escapeHtml(noticeRef.title)}` : '查看这条通知'}</span></button>` : ''}
   ${m.kind === 'reminder' ? reminderPills(m) : ''}
 </div>
 </div>`
@@ -139,7 +119,7 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
     if (!inner || typingRow) return
     const rows = [...inner.querySelectorAll('.row')]
     const last = rows.at(-1)
-    const continues = last?.dataset.role === 'bot' && Date.now() - (store.message(last.dataset.id)?.at ?? 0) < GROUP_GAP && store.message(last.dataset.id)?.kind !== 'notice'
+    const continues = last?.dataset.role === 'bot' && Date.now() - (store.message(last.dataset.id)?.at ?? 0) < GROUP_GAP
     const stick = nearBottom()
     const html = `<div class="row bot typing enter${continues ? '' : ' first'}" data-role="typing"><div class="gutter">${continues ? '' : mark({ live: true, state: 'thinking' })}</div><div class="stack"><div class="line"><div class="bubble" aria-label="正在输入"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div></div></div></div>`
     inner.append(toNode(html))
@@ -163,18 +143,9 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
     const row = inner?.querySelector(`.row[data-id="${CSS.escape(messageId)}"]`)
     const m = store.message(messageId)
     if (!row || !m) return
-    const pills = row.querySelector('.card .pills, .pills.under')
-    const fresh = toNode(m.kind === 'notice' ? noticeCard(m) : reminderPills(m)).firstElementChild
-    const next = m.kind === 'notice' ? fresh?.querySelector('.pills') : fresh
-    if (pills && next) pills.replaceWith(next)
-  }
-
-  function refreshNotice(message) {
-    const row = inner?.querySelector(`.row[data-id="${CSS.escape(message.id)}"]`)
-    if (!row) return
-    row.querySelector('.bubble').innerHTML = richText(message.text, profile())
-    const card = row.querySelector('.card')
-    if (card) card.replaceWith(toNode(noticeCard(message)))
+    const pills = row.querySelector('.pills.under')
+    const fresh = toNode(reminderPills(m)).firstElementChild
+    if (pills && fresh) pills.replaceWith(fresh)
   }
 
   function flash(messageId) {
@@ -205,7 +176,7 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
   })
 
   return {
-    render, append, patch, flash, showTyping, hideTyping, refreshNotice,
+    render, append, patch, flash, showTyping, hideTyping,
     get channelId() { return channelId },
     refreshMarks() { if (channelId) render(channelId) },
   }

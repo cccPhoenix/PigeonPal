@@ -20,7 +20,13 @@ const PATHS = {
   rss: '<path d="M5 5a14 14 0 0 1 14 14M5 11a8 8 0 0 1 8 8"/><circle cx="6" cy="18" r="1.4"/>',
   sparkle: '<path d="M12 4c.6 3.8 2.2 5.4 6 6-3.8.6-5.4 2.2-6 6-.6-3.8-2.2-5.4-6-6 3.8-.6 5.4-2.2 6-6Z"/>',
   image: '<rect x="4" y="5" width="16" height="14" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="m5 17 4.5-4.5 3 3 2-2L20 18"/>',
+  calendar: '<rect x="4.5" y="5.5" width="15" height="14" rx="3.5"/><path d="M4.5 10h15M9 3.5v4M15 3.5v4"/>',
+  attach: '<path d="M12 5v14M5 12h14"/><circle cx="12" cy="12" r="8.5"/>',
   key: '<circle cx="8" cy="9" r="4"/><path d="m11 12 8 8 2-2-2-2 1-1-2-2-1 1-3-3"/>',
+  school: '<path d="m3 10 9-6 9 6v10H3Z"/><path d="M3 10h18M9 20v-6h6v6"/>',
+  computer: '<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  graduate: '<path d="m2 9 10-5 10 5-10 5Z"/><path d="M6 11v5c2 2 10 2 12 0v-5M22 9v7"/>',
+  book: '<path d="M12 6c-2.5-1.6-5.5-1.8-9-1v14c3.5-.8 6.5-.6 9 1 2.5-1.6 5.5-1.8 9-1V5c-3.5-.8-6.5-.6-9 1ZM12 6v14"/>',
 }
 
 export const icon = (name, size = 18) => `<svg class="ic" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${PATHS[name] ?? ''}</svg>`

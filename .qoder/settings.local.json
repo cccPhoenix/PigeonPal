@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(which npm node 2>&1; echo \"---versions---\"; npm --version 2>&1; node --version 2>&1)",
+      "Bash(ls -la 2>&1 | head -40)",
+      "Bash(cd \"D:/project/PigeonPal/PigeonPal\" && echo \"=== branch ===\"; git branch -vv 2>&1; echo \"=== remotes ===\"; git remote -v 2>&1; echo \"\\(none if blank\\)\"; echo \"=== status ===\"; git status --short --branch 2>&1 | head -30)",
+      "Bash(echo \"=== gh cli ===\"; which gh 2>&1; gh --version 2>&1 | head -3; echo \"=== gh auth ===\"; gh auth status 2>&1 | head -10; echo \"=== git user ===\"; git config --get user.name 2>&1; git config --get user.email 2>&1)",
+      "Bash(ls -la ~/.codex/ 2>/dev/null || echo \"NO ~/.codex\")",
+      "Read(//c/Users/Bill/.codex/**)",
+      "Bash(ls -la /c/Users/Bill/ 2>/dev/null | head -50)"
+    ]
+  }
+}
