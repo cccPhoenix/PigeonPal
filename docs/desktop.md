@@ -14,13 +14,13 @@
 
 ## 数据与更新
 
-Windows 桌面数据根目录：`%APPDATA%\PigeonPal`。
+桌面数据根目录：Windows 为 `%APPDATA%\PigeonPal`，macOS 为 `~/Library/Application Support/PigeonPal`。
 - `data/`：通知、提醒、模型整理缓存。
 - `auth/`：本机加密校园凭据与 API 配置，不可向他人分发。
 - `desktop-notifications.json`：通知去重 ID 和免打扰偏好，不保存通知正文。
 - `Partitions/pigeonpal/`：界面记录和偏好（Chromium 持久 session）。
 
-升级安装不会删除数据；卸载默认也保留用户数据。如需换电脑，请分别管理凭据与普通数据，勿将整个用户目录加入仓库或公开备份。开发网页版默认目录和桌面目录不同，不会自动复制开发者私有数据给安装包。
+升级安装不会删除数据；卸载默认也保留用户数据。如需换电脑，请分别管理凭据与普通数据，勿将整个用户目录加入仓库或公开备份。Windows 桌面版与开发网页版默认数据目录不同；macOS 的通知/提醒 data 目录可能与原网页服务共用，写入锁会阻止它们同时运行。桌面认证目录为上述根目录下的 auth，旧网页版的 ~/.pigeonpal/auth 不会自动复制，首次桌面使用可能需重新绑定。界面记录属于新的固定来源，安装包始终不携带任何开发者私有数据。
 
 ## 开发与构建
 
