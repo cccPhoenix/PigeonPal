@@ -94,3 +94,32 @@ test('the notice list shows each row title with its source', () => {
   assert.match(listRoot.innerHTML, /图书馆招募志愿者/)
   assert.match(listRoot.innerHTML, /云峰通知 ·/)
 })
+
+test('clicking the selected notice again closes its detail', () => {
+  const store = createStore(null)
+  store.upsertNotice('src-yunfeng', item('a', 'yunfeng', 5))
+  store.upsertNotice('src-yunfeng', item('b', 'yunfeng', 6))
+  const listeners = {}
+  const host = { dataset: {} }
+  const listRoot = {
+    ...pane(), parentElement: host,
+    addEventListener(type, handler) { listeners[type] = handler },
+  }
+  const detailRoot = { ...pane(), classList: { remove() {}, add() {} } }
+  const rail = createRail({ listRoot, detailRoot, store, client: { notice: async () => ({}) } })
+  const clickNotice = noticeId => listeners.click({
+    target: { closest(selector) { return selector === '[data-notice]' ? { dataset: { notice: noticeId } } : null } },
+  })
+
+  rail.render()
+  clickNotice('a')
+  assert.equal(rail.selected, 'a')
+  assert.equal(host.dataset.pane, 'detail')
+  clickNotice('b')
+  assert.equal(rail.selected, 'b')
+  assert.equal(host.dataset.pane, 'detail')
+  clickNotice('b')
+  assert.equal(rail.selected, null)
+  assert.equal(host.dataset.pane, 'list')
+  assert.doesNotMatch(listRoot.innerHTML, /正在查看/)
+})

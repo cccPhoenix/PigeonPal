@@ -218,7 +218,7 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
   function bind(root) {
     root.addEventListener('click', e => {
       const picked = e.target.closest?.('[data-notice]')
-      if (picked) return openNotice(picked.dataset.notice)
+      if (picked) return selected === picked.dataset.notice ? back() : openNotice(picked.dataset.notice)
       const chip = e.target.closest?.('[data-rail="filter"]')
       if (chip) return setFilter(chip.dataset.src || null)
       if (e.target.closest?.('[data-rail="back"]')) return back()
