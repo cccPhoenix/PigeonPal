@@ -40,6 +40,8 @@ export function startGaze(root = document) {
   const clamp = v => Math.max(-1, Math.min(1, v))
   const place = () => {
     frame = 0
+    // Width dragging queries layout every frame already; the gaze can wait.
+    if (document.documentElement.dataset.resizing) return
     for (const node of root.querySelectorAll('.mk[data-gaze]')) {
       if (!point) { node.style.setProperty('--gx', 0); node.style.setProperty('--gy', 0); continue }
       const box = node.getBoundingClientRect()

@@ -28,12 +28,13 @@ test('six examples reach channel copy, details and browser persistence with prec
     assert.ok(!copy.includes(entry.title))
     assert.equal(decisionCopy({ ...item, ...analysisFields(rows[index].analysis) }), copy)
     const store = createStore(null)
-    store.upsertNotice('src-yunfeng', { role: 'bot', kind: 'notice', text: copy, item })
-    store.upsertNotice('src-yunfeng', { role: 'bot', kind: 'notice', text: copy, item })
-    assert.equal(store.state.messages['src-yunfeng'].length, 1)
-    const restored = hydrate(JSON.stringify(store.state)).messages['src-yunfeng'][0]
-    assert.equal(restored.text, copy)
-    assert.equal(restored.item.benefits, entry.expected.benefits)
+    const first = store.upsertNotice('src-yunfeng', item)
+    const second = store.upsertNotice('src-yunfeng', item)
+    assert.deepEqual([first.created, second.created, second.revised], [true, false, false])
+    assert.equal(store.upsertNotice('src-yunfeng', { ...item, revision: 'v2' }).revised, true)
+    assert.equal(Object.keys(store.state.notices).length, 1)
+    const restored = hydrate(JSON.stringify(store.state)).notices[item.noticeId]
+    assert.equal(restored.benefits, entry.expected.benefits)
   }
   assert.doesNotMatch(noticeCopy(items[2]), /2026|00:00|23:59/)
   assert.match(noticeCopy(items[4]), /完成全部服务并审核通过后计入3小时/)
@@ -53,19 +54,27 @@ test('pending, processing, failed and body/key failures never display stale infe
   assert.match(noticeCopy({ real: true, analysisState: 'ready', summary: '旧摘要' }), /旧版整理结果待更新/)
 })
 
-test('real notice title is collapsed; main copy is escaped and full decision summary remains visible', () => {
+test('rail detail table escapes the title and lists the full decision summary', async () => {
   const store = createStore(null)
   const entry = row(cases[4])
-  const item = { real: true, title: '<img src=x onerror=alert(1)>', noticeId: entry.id, ...analysisFields(entry.analysis) }
-  store.addMessage('src-yunfeng', { role: 'bot', kind: 'notice', text: noticeCopy(item), item })
-  const root = { innerHTML: '', firstElementChild: { querySelectorAll: () => [] }, addEventListener() {}, scrollTo() {} }
-  const jump = { addEventListener() {} }
-  globalThis.matchMedia = () => ({ matches: false })
-  const transcript = createTranscript({ root, jump, store, onAction() {} })
-  transcript.render('src-yunfeng')
-  assert.match(root.innerHTML, /<details><summary>原标题<\/summary>/)
-  assert.match(root.innerHTML, /完成全部服务并审核通过后计入3小时/)
-  assert.doesNotMatch(root.innerHTML, /<img src=x/)
-  assert.match(root.innerHTML, /&lt;img/)
+  const item = { real: true, title: '<img src=x onerror=alert(1)>', noticeId: entry.id, sourceId: 'yunfeng', ...analysisFields(entry.analysis) }
+  store.upsertNotice('src-yunfeng', item)
+  const listRoot = { innerHTML: '', addEventListener() {} }
+  const detailRoot = { innerHTML: '', addEventListener() {} }
+  globalThis.document = globalThis.document ?? { addEventListener() {} }
+  const { createRail } = await import('../web/js/ui/rail.js')
+  const rail = createRail({
+    listRoot, detailRoot, store, onRemind() {},
+    client: { notice: async () => ({ publisher: '<b>x</b>', state: 'complete', content: '正文', attachments: [] }) },
+  })
+  rail.render()
+  rail.openNotice(entry.id)
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.match(detailRoot.innerHTML, /class="kv-table"/)
+  assert.match(detailRoot.innerHTML, /完成全部服务并审核通过后计入3小时/)
+  assert.doesNotMatch(detailRoot.innerHTML, /<img src=x/)
+  assert.match(detailRoot.innerHTML, /&lt;img/)
+  assert.doesNotMatch(detailRoot.innerHTML, /<b>x<\/b>/)
+  assert.match(detailRoot.innerHTML, /&lt;b&gt;x&lt;\/b&gt;/)
   assert.match(richText('<script>alert(1)</script>', {}), /&lt;script&gt;/)
 })

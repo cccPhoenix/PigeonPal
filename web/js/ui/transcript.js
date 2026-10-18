@@ -59,6 +59,7 @@ export function createTranscript({ root, jump, store, onAction }) {
   function rowHTML(m, { first, live, enter }) {
     const user = m.role === 'user'
     const quoted = m.quoteId && store.message(m.quoteId)
+    const noticeRef = m.noticeId && store.notice(m.noticeId)
     const cls = ['row', user ? 'user' : 'bot', (m.kind === 'notice' || isHomework(m.item)) && m.item?.real ? 'notice-row' : '', first ? 'first' : '', enter ? 'enter' : ''].filter(Boolean).join(' ')
     return `<div class="${cls}"${isHomeworkCard(m) ? ' data-homework-card="true"' : ''} data-id="${escapeHtml(m.id)}" data-role="${m.role}">
 ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}</div>`}
@@ -69,6 +70,7 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
     <div class="tools"><time>${clock(m.at)}</time><button class="tool" data-act="copy" data-id="${escapeHtml(m.id)}" aria-label="复制">${icon('copy', 16)}</button><button class="tool" data-act="reply" data-id="${escapeHtml(m.id)}" aria-label="引用回复">${icon('reply', 16)}</button></div>
   </div>
   ${m.kind === 'notice' || isHomework(m.item) ? noticeCard(m) : ''}
+  ${noticeRef ? `<button class="quote-ref" data-act="goto-notice" data-id="${escapeHtml(m.id)}">${icon(user ? 'attach' : 'bell', 14)}<span>${user ? `通知附件 · ${escapeHtml(noticeRef.title)}` : '查看这条通知'}</span></button>` : ''}
   ${m.kind === 'reminder' ? reminderPills(m) : ''}
 </div>
 </div>`
@@ -164,7 +166,7 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
     if (!inner || typingRow) return
     const rows = [...inner.querySelectorAll('.row')]
     const last = rows.at(-1)
-    const continues = last?.dataset.role === 'bot' && Date.now() - (store.message(last.dataset.id)?.at ?? 0) < GROUP_GAP && store.message(last.dataset.id)?.kind !== 'notice'
+    const continues = last?.dataset.role === 'bot' && Date.now() - (store.message(last.dataset.id)?.at ?? 0) < GROUP_GAP
     const stick = nearBottom()
     const html = `<div class="row bot typing enter${continues ? '' : ' first'}" data-role="typing"><div class="gutter">${continues ? '' : mark({ live: true, state: 'thinking' })}</div><div class="stack"><div class="line"><div class="bubble" aria-label="正在输入"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div></div></div></div>`
     inner.append(toNode(html))

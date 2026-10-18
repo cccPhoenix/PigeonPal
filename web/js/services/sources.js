@@ -64,6 +64,30 @@ export function noticeCopy(item, now = Date.now()) {
   }
 }
 
+// One line in the companion chat pointing at the rail entry; never carries the full copy,
+// so a later revision of the notice cannot leave stale text behind.
+export function headsUp(item, channelTitle) {
+  const title = Array.from(item.title ?? '').slice(0, 30).join('')
+  return `🔔 {nickname}，${channelTitle}有新通知：「${title}」，我放到通知栏了～`
+}
+
+export const NOTICE_DRAG_TYPE = 'application/x-pp-notice'
+
+// /api/chat resolves noticeId server-side and hard-fails when the record is pruned or has
+// no body, so only complete notices may leave the notice view.
+export function isAttachable(item) {
+  if (!item?.real || item.fetchable === false) return false
+  return item.state ? item.state === 'complete' : item.analysisState === 'ready'
+}
+
+export function parseDropPayload(text) {
+  if (typeof text !== 'string' || !text) return null
+  let data
+  try { data = JSON.parse(text) } catch { return null }
+  if (!data || typeof data !== 'object' || typeof data.noticeId !== 'string') return null
+  return { noticeId: data.noticeId.slice(0, 200), title: typeof data.title === 'string' ? data.title.slice(0, 200) : '' }
+}
+
 export function localAdapters(client) {
   return LOCAL_CHANNELS.map(channel => ({
     id: `local-${channel.sourceId}`, channelId: channel.id, snapshot: channel.sourceId === 'xzzd',
@@ -99,6 +123,9 @@ export function localAdapters(client) {
         const exactTime = value => typeof value === 'string' && value.includes('T') && Number.isFinite(Date.parse(value)) ? Date.parse(value) : null
         return {
           id: row.id, noticeId: row.id, revision: row.revision, sourceId: row.sourceId, real: true,
+          // Completeness decides whether a notice can be attached to a question.
+          state: typeof row.state === 'string' ? row.state : '',
+          ...(row.fetchable === false ? { fetchable: false } : {}),
           title: row.title, url: row.url, contentVersion: row.version,
           publishedDate: row.publishedAt || '',
           publishedAt: Date.parse(`${row.publishedAt}T00:00:00+08:00`) || Date.parse(row.firstSeenAt) || Date.now(),

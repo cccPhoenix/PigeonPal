@@ -17,6 +17,7 @@ notice-ai.json.bak
 runtime-state.json
 runtime-state.json.bak
 .claude/settings.local.json
+.qoder/settings.local.json
 build/backend-dist/
 build/pyinstaller/
 build/icon.ico

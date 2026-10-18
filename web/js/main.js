@@ -3,14 +3,17 @@ import { createStore } from './store.js'
 import { newId, pendingReminders } from './reminders.js'
 import { markHTML, setMarkState, startGaze } from './mark/index.js'
 import { createAIChat, buildChatHistory, GREETING } from './services/chat.js'
-import { startFeed, localAdapters, noticeCopy, eventPhrase, NOTICE_CATEGORIES, LOCAL_CHANNELS } from './services/sources.js'
+import { startFeed, localAdapters, headsUp, eventPhrase, NOTICE_CATEGORIES, LOCAL_CHANNELS } from './services/sources.js'
 import { analysisFields, decisionCopy } from './services/notice-summary.js'
 import { homeworkDetailHTML, isHomework, homeworkReminderMessage } from './services/homework.js'
 import { systemNotify } from './services/scheduler.js'
-import { createSidebar } from './ui/sidebar.js'
+import { createIconRail } from './ui/dock.js'
 import { createHeader } from './ui/header.js'
 import { createTranscript } from './ui/transcript.js'
 import { createComposer } from './ui/composer.js'
+import { createRail } from './ui/rail.js'
+import { createSplitter } from './ui/splitter.js'
+import { lookHue, imageHue } from './ui/palette.js'
 import { openSettings } from './ui/settings.js'
 import { createAuthClient } from './services/auth.js'
 import { openIdentityAuth as showIdentityAuth } from './ui/auth.js'
@@ -62,76 +65,123 @@ function sourceStateLabel(sourceId) {
   return ({ idle: '等待下次检查', ready: '正常采集', ok: '正常采集', success: '正常采集', active: '正常采集', running: '正在采集', crawling: '正在采集', partial: '部分正文待补齐', interrupted: '上次采集中断', auth_required: '待认证', auth_expired: '认证已失效', authenticating: '正在认证', error: '采集暂时异常', backoff: '稍后重试', paused: '已暂停', network_error: '网络暂时不可用' })[state] || (state ? '等待检查' : '正在读取状态…')
 }
 
-let active = sessionStorage.getItem('pp.active') || 'bot'
-if (!store.channel(active)) active = 'bot'
+let active = 'bot'
 
 // ------------------------------------------------------------------ chrome
+let paletteLook = null
+let paletteImage = null
+let paletteRun = 0
 function applyPrefs() {
   const p = store.state.profile
   if (p.theme === 'system') delete document.documentElement.dataset.theme
   else document.documentElement.dataset.theme = p.theme
   document.documentElement.dataset.motion = p.motion
+  document.documentElement.style.setProperty('--w-chat', `${p.chatW}px`)
+  if (p.look !== paletteLook || p.image !== paletteImage) {
+    paletteLook = p.look
+    paletteImage = p.image
+    const run = ++paletteRun
+    document.documentElement.style.setProperty('--look-hue', String(lookHue(p.look)))
+    if (p.look === 'image' && p.image) imageHue(p.image).then(hue => {
+      if (run === paletteRun && hue !== null) document.documentElement.style.setProperty('--look-hue', String(hue))
+    })
+  }
   document.title = `${p.botName} · PigeonPal`
 }
 
-const sidebar = createSidebar({
-  root: $('side'), store,
-  onSelect: id => select(id),
+const noticeView = $('notice')
+
+function setView(view) {
+  noticeView.dataset.view = view
+  $('pane-calendar').hidden = view !== 'calendar'
+  dock.setView(view)
+}
+
+const dock = createIconRail({
+  root: $('dock-nav'), store,
+  onView: setView,
+  onBot: () => { select('bot'); dock.setView('chat'); if (narrowChat()) toggleChat(true); else composer.focus() },
+  onHomework: () => { select('src-xzzd'); dock.setView('homework'); if (narrowChat()) toggleChat(true) },
   onMe: openMeMenu,
   onAddSource: openAddSource,
   onSearch: openSearch,
 })
-const header = createHeader({ root: $('head'), store, onWho: openWho, onToggleSide: () => toggleSide() })
+const header = createHeader({ root: $('head'), store, onWho: openWho, onCloseChat: () => toggleChat(false) })
 const transcript = createTranscript({ root: $('log'), jump: $('jump'), store, onAction })
 const composer = createComposer({ root: $('dock'), store, onSend: send, onPlus: openPlusMenu })
+const rail = createRail({
+  listRoot: $('pane-list'), detailRoot: $('pane-detail'), store, client: apiClient,
+  onRemind: (item, anchor) => openNoticeReminder(item, anchor),
+  onAttach: n => composer.attachNotice(n.noticeId),
+})
 
-function toggleSide(open = app.dataset.side !== 'open') {
-  app.dataset.side = open ? 'open' : ''
-  $('side-scrim').hidden = !open
+const narrowChat = () => window.matchMedia('(max-width: 1099px)').matches
+const noticeUnread = () => store.state.channels.filter(c => c.kind === 'source' && c.sourceId !== 'xzzd').reduce((sum, c) => sum + (store.state.unread[c.id] ?? 0), 0)
+
+createSplitter({
+  handle: $('split'),
+  get: () => store.state.profile.chatW,
+  set: px => store.setProfile({ chatW: px }),
+})
+
+function toggleChat(open = app.dataset.chat !== 'open') {
+  app.dataset.chat = open ? 'open' : ''
+  $('chat-scrim').hidden = !open
 }
-$('side-scrim').addEventListener('click', () => toggleSide(false))
+$('chat-scrim').addEventListener('click', () => toggleChat(false))
+
+function syncBadges() {
+  dock.setUnread(noticeUnread())
+  dock.setChatUnread(store.state.unread.bot ?? 0)
+  dock.setHomeworkUnread(store.state.unread['src-xzzd'] ?? 0)
+}
+
+function revealNotice(noticeId) {
+  if (!store.notice(noticeId)) return
+  setView('notice')
+  rail.reveal(noticeId)
+}
 
 function select(id) {
-  if (!store.channel(id)) return
+  const c = store.channel(id)
+  if (!c || (c.kind !== 'bot' && id !== 'src-xzzd')) return
   const changed = id !== active
   active = id
-  sessionStorage.setItem('pp.active', id)
-  sidebar.setActive(id)
   if (changed || !transcript.channelId) { header.render(id); transcript.render(id) }
   store.markRead(id)
-  const c = store.channel(id)
-  composer.setPlaceholder(c.kind === 'bot' ? `给${store.state.profile.botName}发消息` : `聊聊「${c.title}」里的消息`)
+  composer.setPlaceholder(`给${id === 'bot' ? store.state.profile.botName : c.title}发消息`)
   if (pending.has(id)) transcript.showTyping()
-  toggleSide(false)
+  syncBadges()
 }
 
 // -------------------------------------------------------------- reactions
 store.on('message', m => {
-  sidebar.update(m.channelId)
   transcript.append(m)
   if (m.channelId === active && document.visibilityState === 'visible') store.markRead(m.channelId)
 })
-store.on('homework-snapshot', ({ channelId }) => { sidebar.update(channelId); transcript.syncHomeworkSnapshot(channelId) })
-store.on('unread', id => sidebar.update(id))
-store.on('message-updated', message => { sidebar.update(message.channelId); transcript.refreshNotice(message) })
-store.on('channels', () => sidebar.render())
+store.on('homework-snapshot', ({ channelId }) => { transcript.syncHomeworkSnapshot(channelId); syncBadges() })
+store.on('unread', () => { rail.renderList(); syncBadges() })
+store.on('message-updated', message => { transcript.refreshNotice(message); syncBadges() })
+store.on('notice', e => { rail.onNotice(e); syncBadges() })
+store.on('channels', () => rail.renderList())
 store.on('profile', patch => {
   applyPrefs()
   if (['look', 'image', 'botName', 'nickname'].some(k => k in patch)) {
-    sidebar.render(); sidebar.setActive(active)
+    dock.render(); syncBadges()
     header.render(active, { animate: false })
     transcript.render(active)
   }
 })
 store.on('reminders', r => {
   if (!r) return
-  for (const m of store.state.messages[active] ?? []) if (m.reminderId === r.id || m.id === r.noticeId || m.item?.noticeId === r.noticeId) transcript.patch(m.id)
+  for (const m of store.state.messages[active] ?? []) if (m.reminderId === r.id || m.id === r.noticeId || m.noticeId === r.noticeId || m.item?.noticeId === r.noticeId) transcript.patch(m.id)
+  rail.patchRemindPill(r)
 })
 store.on('save-failed', () => toast('本地存储不可用，刷新后记录会丢失'))
-store.on('reset', () => { sessionStorage.removeItem('pp.active'); location.reload() })
+store.on('reset', () => location.reload())
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') store.markRead(active) })
 
-// Something new somewhere: the bot hops in the sidebar and the row lights up.
+// Something new somewhere: the bot hops in the dock and the notice view lights up.
 function announce(channelId, title, body) {
   const c = store.channel(channelId)
   if (!store.state.profile.proactive || c?.notify === 'mute') return
@@ -140,8 +190,8 @@ function announce(channelId, title, body) {
   const quiet = p.quietStart === p.quietEnd ? false : p.quietStart < p.quietEnd
     ? now >= p.quietStart && now < p.quietEnd : now >= p.quietStart || now < p.quietEnd
   if (quiet) return
-  setMarkState(sidebar.botMark(), 'alert')
-  if (channelId !== 'bot') sidebar.bump(channelId)
+  setMarkState(dock.mark(), 'alert')
+  if (channelId !== 'bot') dock.bump()
   systemNotify(title, body)
 }
 
@@ -151,12 +201,13 @@ const pending = new Map() // channelId -> number of active reply streams
 const queues = new Map()   // channelId -> { texts, quoteId, timer }
 
 // Short messages sent in a burst get one reply, the way a person reads them.
-function send(text, quoteId) {
+function send(text, { quoteId, noticeId } = {}) {
   const ch = active
-  store.addMessage(ch, { role: 'user', text, ...(quoteId ? { quoteId } : {}) })
+  store.addMessage(ch, { role: 'user', text, ...(quoteId ? { quoteId } : {}), ...(noticeId ? { noticeId } : {}) })
   const q = queues.get(ch) ?? { texts: [], timer: 0, requestId: newId('chat'), firstIndex: store.state.messages[ch].length - 1 }
   q.texts.push(text)
   if (quoteId) q.quoteId = quoteId
+  if (noticeId) q.noticeId = noticeId
   clearTimeout(q.timer)
   q.timer = setTimeout(() => flush(ch), 900)
   queues.set(ch, q)
@@ -169,7 +220,7 @@ async function flush(ch) {
   queues.delete(ch)
   const history = buildChatHistory(store.state.messages[ch].slice(0, q.firstIndex), store.state.profile, store.state.reminders)
   await run(ch, services.chat.respond({ text: q.texts.join('\n'), channelId: ch, state: store.state,
-    requestId: q.requestId, quoteId: q.quoteId, history }))
+    requestId: q.requestId, quoteId: q.quoteId, noticeId: q.noticeId, history }))
 }
 
 // Plays a reply stream: typing, bubbles and actions, in order.
@@ -215,8 +266,9 @@ async function onAction(act, id, el) {
     }
     if (act === 'reply' && m) composer.setQuote(m)
     if (act === 'jump' && m) { if (m.channelId !== active) select(m.channelId); requestAnimationFrame(() => transcript.flash(m.id)) }
-    if (act === 'open-notice' && m) await openNotice(m, el)
-    if (act === 'remind-notice' && m) openNoticeReminder(m, el)
+    if (act === 'goto-notice' && m) revealNotice(m.noticeId)
+    if (act === 'open-notice' && m) return openNotice(m, el)
+    if (act === 'remind-notice' && m?.item) return openNoticeReminder(m.item, el)
     if (act === 'reminder-done') {
       const { reminder: r } = await apiClient.updateReminder(id, { status: 'done' })
       store.syncReminders([r])
@@ -273,10 +325,10 @@ ${detail?.attachments?.length ? `<div class="note">附件：${detail.attachments
   }
 }
 
-function openNoticeReminder(m, anchor) {
+function openNoticeReminder(item, anchor) {
   if (overlayFor(anchor)) return closeOverlay()
-  const item = m.item ?? {}
-  const existing = store.state.reminders.find(r => (r.noticeId === m.id || r.noticeId === item.noticeId) && r.status === 'pending')
+  const channelId = store.state.channels.find(c => c.sourceId === item.sourceId)?.id ?? 'bot'
+  const existing = store.state.reminders.find(r => r.noticeId === item.noticeId && r.status === 'pending')
   const reference = item.eventAt || (typeof item.deadlineAt === 'string' && item.deadlineAt.includes('T') ? Date.parse(item.deadlineAt) : null)
   const before = item.eventAt ? '开始前' : '截止前'
   const options = [[15, `${before} 15 分钟`], [30, `${before} 30 分钟`], [60, `${before} 1 小时`], [24 * 60, '提前一天']]
@@ -290,16 +342,16 @@ ${existing ? `<div class="pop-sep"></div><button class="mi danger" data-at="canc
     if (!b) return
     closeOverlay()
     if (b.dataset.at === 'custom') return openNewReminder(anchor, {
-      title: `「${item.title.slice(0, 35)}」`, channelId: m.channelId, noticeId: item.noticeId || m.id,
+      title: `「${item.title.slice(0, 35)}」`, channelId, noticeId: item.noticeId,
     })
     if (b.dataset.at === 'cancel') {
       try { const result = await apiClient.updateReminder(existing.id, { status: 'cancelled' }); store.syncReminders([result.reminder]) } catch (error) { return toast(apiErrorText(error)) }
       return toast('提醒已取消')
     }
     try {
-      const { reminder: r } = await apiClient.createReminder({ title: `「${item.title.slice(0, 75)}」`, dueAt: Number(b.dataset.at), channelId: m.channelId, noticeId: item.noticeId || m.id })
+      const { reminder: r } = await apiClient.createReminder({ title: `「${item.title.slice(0, 75)}」`, dueAt: Number(b.dataset.at), channelId, noticeId: item.noticeId })
       store.syncReminders([r])
-      run(m.channelId, (async function* () { yield { type: 'typing', ms: 600 }; yield { type: 'message', text: `好嘞～${whenLabel(r.dueAt)} 叫你 ⏰`, quoteId: m.id } })())
+      run('bot', (async function* () { yield { type: 'typing', ms: 600 }; yield { type: 'message', text: `好嘞～${whenLabel(r.dueAt)} 叫你 ⏰` } })())
     } catch (err) { toast(apiErrorText(err)) }
   })
 }
@@ -455,11 +507,18 @@ function openSearch(anchor) {
   const results = pop.querySelector('[data-results]')
   const draw = q => {
     const all = Object.values(store.state.messages).flat()
-    const hits = q ? all.filter(m => plain(m.text, store.state.profile).includes(q) || m.item?.title?.includes(q)).slice(-20).reverse() : []
-    results.innerHTML = hits.map(m => { const c = store.channel(m.channelId); return `<button class="mi" data-id="${escapeHtml(m.id)}"><span>${escapeHtml(c.kind === 'bot' ? '💬' : c.emoji)}</span><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(plain(m.text, store.state.profile))}</span></button>` }).join('') || (q ? '<div class="muted" style="padding:8px 10px">没有找到</div>' : '')
+    const hits = q ? all.filter(m => plain(m.text, store.state.profile).includes(q)).slice(-20).reverse() : []
+    const notices = q ? Object.values(store.state.notices).filter(n => n.title.includes(q)).slice(0, 20) : []
+    const clip = 'style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"'
+    results.innerHTML = [
+      ...notices.map(n => { const c = store.state.channels.find(x => x.sourceId === n.sourceId); return `<button class="mi" data-notice="${escapeHtml(n.noticeId)}"><span>${escapeHtml(c?.emoji ?? '🔔')}</span><span ${clip}>${escapeHtml(n.title)}</span></button>` }),
+      ...hits.map(m => { const c = store.channel(m.channelId); return `<button class="mi" data-id="${escapeHtml(m.id)}"><span>${escapeHtml(c.kind === 'bot' ? '💬' : c.emoji)}</span><span ${clip}>${escapeHtml(plain(m.text, store.state.profile))}</span></button>` }),
+    ].join('') || (q ? '<div class="muted" style="padding:8px 10px">没有找到</div>' : '')
   }
   pop.querySelector('[data-q]').addEventListener('input', e => draw(e.target.value.trim()))
   results.addEventListener('click', e => {
+    const n = e.target.closest('[data-notice]')
+    if (n) { closeOverlay(); return revealNotice(n.dataset.notice) }
     const b = e.target.closest('[data-id]')
     if (!b) return
     const m = store.message(b.dataset.id)
@@ -513,8 +572,11 @@ async function refreshRuntime() {
 // ------------------------------------------------------------------- boot
 connectDesktop(store, select)
 applyPrefs()
-sidebar.render()
-select(active)
+dock.render()
+rail.render()
+setView('notice')
+select('bot')
+syncBadges()
 startGaze(document)
 refreshSourceStates()
 
@@ -534,8 +596,11 @@ startFeed({
   onItem(channelId, item) {
     if (!store.channel(channelId)) return
     const live = Number.isFinite(item.receivedAt) && Date.now() - item.receivedAt < 60_000
-    const { created, revised } = store.upsertNotice(channelId, { role: 'bot', kind: 'notice', text: noticeCopy(item), item, at: item.publishedAt }, { unread: channelId !== active })
-    if (live && (created || revised)) announce(channelId, store.channel(channelId).title, plain(noticeCopy(item), store.state.profile))
+    const { created, revised } = store.upsertNotice(channelId, item, { unread: live })
+    if (!live || !(created || revised)) return
+    const text = headsUp(item, store.channel(channelId).title)
+    if (created) store.addMessage('bot', { role: 'bot', kind: 'text', text, noticeId: item.noticeId }, { unread: active !== 'bot' })
+    announce(channelId, store.channel(channelId).title, plain(text, store.state.profile))
   },
 })
 

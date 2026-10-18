@@ -12,14 +12,24 @@
   </head>
   <body>
     <div class="app" id="app">
-      <aside class="side" id="side" aria-label="会话"></aside>
-      <button class="side-scrim" id="side-scrim" aria-label="收起侧栏" hidden></button>
-      <main class="main">
+      <nav class="dock" id="dock-nav" aria-label="主导航"></nav>
+      <main class="notice" id="notice" aria-label="通知" data-view="notice">
+        <div class="pane pane-list" id="pane-list"></div>
+        <div class="pane pane-detail" id="pane-detail"></div>
+        <div class="pane placeholder" id="pane-calendar" hidden>
+          <svg class="ic" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="5.5" width="15" height="14" rx="3.5"/><path d="M4.5 10h15M9 3.5v4M15 3.5v4"/></svg>
+          <h2>日历</h2>
+          <p>日历视图正在开发中，之后会把提醒和日程排到这里。</p>
+        </div>
+      </main>
+      <span class="split" id="split" role="separator" aria-orientation="vertical" tabindex="0" aria-label="拖动调整通知栏与对话栏的宽度"></span>
+      <button class="chat-scrim" id="chat-scrim" aria-label="收起对话" hidden></button>
+      <section class="chat" id="chat" aria-label="对话">
         <header class="head" id="head"></header>
         <div class="log" id="log" tabindex="-1"></div>
         <button class="jump" id="jump" hidden></button>
-        <footer class="dock" id="dock"></footer>
-      </main>
+        <footer class="composer-bar" id="dock"></footer>
+      </section>
     </div>
     <div class="layer" id="layer"></div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>

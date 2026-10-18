@@ -2,18 +2,18 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createStore, createInitialState, hydrate } from '../web/js/store.js'
 globalThis.document = { addEventListener() {} }
-const { createSidebar } = await import('../web/js/ui/sidebar.js')
+const { createIconRail } = await import('../web/js/ui/dock.js')
 
-test('the application exposes one companion and source channels without team controls', () => {
+test('the application exposes one companion and two views without team controls', () => {
   const store = createStore(null)
   const root = { innerHTML: '', addEventListener() {} }
-  createSidebar({ root, store }).render()
-  assert.ok(!root.innerHTML.includes('data-side="add-bot"'))
-  assert.ok(!root.innerHTML.includes('data-side="add-group"'))
+  createIconRail({ root, store, onView() {}, onBot() {}, onMe() {}, onAddSource() {}, onSearch() {} }).render()
+  assert.ok(!root.innerHTML.includes('add-bot'))
+  assert.ok(!root.innerHTML.includes('add-group'))
   assert.ok(!root.innerHTML.includes('Chief'))
-  assert.ok(root.innerHTML.includes('校园伙伴'))
-  assert.ok(root.innerHTML.includes('求是学院'))
-  assert.ok(root.innerHTML.includes('本科生院'))
+  assert.match(root.innerHTML, /data-view="notice"/)
+  assert.match(root.innerHTML, /data-view="calendar"/)
+  assert.match(root.innerHTML, /aria-label="和小浙说话"/)
   assert.equal(createInitialState().bots, undefined)
 })
 

@@ -57,14 +57,16 @@ export const GREETING = ['嗨～我是{name} 👋', '以后学校里有什么新
 
 export function createAIChat(client) {
   return {
-    async *respond({ text, channelId, state, requestId, quoteId, history }) {
+    async *respond({ text, channelId, state, requestId, quoteId, noticeId, history }) {
       yield { type: 'typing', ms: 0 }
       const candidate = quoteId && Object.values(state.messages).flat().find(message => message.id === quoteId)
       const quoted = candidate && !localHomeworkMessage(candidate, state.reminders || []) ? candidate : null
+      // An explicit attachment wins over a quoted message's own notice reference.
+      const attached = noticeId ?? quoted?.noticeId ?? null
       const result = await client.chat({ text, channelId, requestId,
         profile: { botName: state.profile.botName, nickname: state.profile.nickname },
         history, ...(quoted ? { quotedText: String(quoted.text).slice(0, 4000) } : {}),
-        ...(quoted?.item?.noticeId ? { noticeId: quoted.item.noticeId } : {}) })
+        ...(attached ? { noticeId: attached } : {}) })
       if (!Array.isArray(result.events) || !result.events.some(event => event?.type === 'message' && typeof event.text === 'string' && event.text.trim())) throw new Error('Invalid chat events')
       for (const event of result.events) {
         if (!event || typeof event !== 'object') continue
