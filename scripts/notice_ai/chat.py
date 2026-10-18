@@ -5,12 +5,14 @@ import hashlib
 import json
 import re
 import threading
+import time
 import uuid
 
 from crawlers.sources import SOURCES
-from crawlers.homework_selection import parse_homework_query, homework_query_reply
+from crawlers.homework_selection import parse_homework_query, homework_query_reply, select_homework
 
 from .runtime import LOCAL_ZONE
+from .homework import homework_item
 from .schema import AIError, prepare_notice, redact_text
 
 
@@ -174,8 +176,15 @@ class ChatService:
                     raise AIError("request_id_conflict", 409)
                 return saved["response"]
             if parse_homework_query(text, channel_id) is not None:
-                reply = homework_query_reply(self.processor.notices.export_items('xzzd'), text, channel_id)
-                response = {'events': [{'type': 'message', 'text': reply, 'localOnly': True}]}
+                rows = self.processor.notices.export_items('xzzd')
+                now = time.time()
+                selected = select_homework(rows, now=now, query=parse_homework_query(text, channel_id))
+                reply = homework_query_reply(rows, text, channel_id, now=now, selected=selected)
+                events = [{'type': 'message', 'text': reply.split('\n\n', 1)[0], 'localOnly': True}]
+                for row in selected:
+                    events.append({'type': 'message', 'kind': 'notice', 'queryResult': True,
+                                   'text': row['title'], 'localOnly': True, 'item': homework_item(row)})
+                response = {'events': events}
                 self.runtime.save_receipt(request_id, {'signature': signature, 'response': response})
                 return response
             client = self.processor.client

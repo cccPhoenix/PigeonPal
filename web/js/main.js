@@ -182,7 +182,7 @@ async function run(ch, stream) {
         if (ch === active) transcript.showTyping()
         await sleep(event.ms)
       } else if (event.type === 'message') {
-        store.addMessage(ch, { role: 'bot', text: event.text, ...(event.localOnly === true ? { localOnly: true } : {}), ...(event.quoteId ? { quoteId: event.quoteId } : {}) }, { unread: ch !== active })
+        store.addMessage(ch, { role: 'bot', text: event.text, ...(event.kind === 'notice' && event.queryResult === true && isHomework(event.item) ? { kind: 'notice', queryResult: true, item: event.item } : {}), ...(event.localOnly === true ? { localOnly: true } : {}), ...(event.quoteId ? { quoteId: event.quoteId } : {}) }, { unread: ch !== active })
         await sleep(260)
       } else if (event.type === 'action') {
         applyAction(ch, event)

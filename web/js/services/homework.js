@@ -79,7 +79,7 @@ ${attachments.length ? `<div class="note">附件：${attachments.join('、')}</d
 
 // Only ordinary homework slots are sorted: conversations and six-hour reposts
 // keep their chronological positions. Date-only values are ordering keys only.
-export const isHomeworkCard = message => message?.kind === 'notice' && isHomework(message.item)
+export const isHomeworkCard = message => message?.kind === 'notice' && message.queryResult !== true && isHomework(message.item)
 export function orderHomeworkMessages(messages) {
   const deadline = message => {
     const value = cleanTime(message.item?.homework?.deadlineAt)

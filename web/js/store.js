@@ -71,6 +71,7 @@ export function hydrate(raw) {
         ...(typeof m.quoteId === 'string' ? { quoteId: m.quoteId } : {}),
         ...(typeof m.reminderId === 'string' ? { reminderId: m.reminderId } : {}),
         ...(m.localOnly === true ? { localOnly: true } : {}),
+        ...(m.queryResult === true && isHomework(m.item) ? { queryResult: true } : {}),
         ...(['notice', 'reminder'].includes(m.kind) && m.item && typeof m.item === 'object' ? { item: cleanItem(m.item) } : {}) }))
     for (const message of fresh.messages[channel.id]) {
       if (message.kind === 'notice' && message.item?.real) message.text = decisionCopy(message.item)

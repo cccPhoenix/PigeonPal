@@ -10,6 +10,7 @@
 // The app uses createAIChat. The old demo remains only for the legacy unit tests.
 
 import { parseWhen, reminderTitle } from './parse-time.js'
+import { isHomework, homeworkCopy } from './homework.js'
 import { whenLabel, personalize } from '../ui/format.js'
 
 const localHomeworkReminder = reminder => reminder?.channelId === 'src-xzzd' || String(reminder?.noticeId || '').startsWith('xzzd:')
@@ -69,7 +70,10 @@ export function createAIChat(client) {
         if (!event || typeof event !== 'object') continue
         if (event.type === 'action' && ['profile.update', 'reminder.upsert'].includes(event.name)) yield event
         else if (event.type === 'message' && typeof event.text === 'string') {
-          yield { type: 'message', text: event.text, ...(event.localOnly === true ? { localOnly: true } : {}) }
+          if (event.kind === 'notice' && event.queryResult === true && isHomework(event.item)) {
+            yield { type: 'message', kind: 'notice', queryResult: true, localOnly: true,
+              text: homeworkCopy(event.item), item: event.item }
+          } else yield { type: 'message', text: event.text, ...(event.localOnly === true ? { localOnly: true } : {}) }
         }
       }
     },

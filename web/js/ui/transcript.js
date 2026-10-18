@@ -26,12 +26,12 @@ export function createTranscript({ root, jump, store, onAction }) {
 
   function noticeCard(m) {
     const item = m.item ?? {}
-    const channel = store.channel(m.channelId)
     const homework = isHomework(item)
+    const channel = store.channel(homework ? 'src-xzzd' : m.channelId)
     const reminder = store.state.reminders.find(r => (r.noticeId === m.id || r.noticeId === item.noticeId) && r.status === 'pending')
     const time = item.eventAt ? `${eventPhrase(item.eventAt)}${item.eventEnd ? ` – ${clock(item.eventEnd)}` : ''}` : ''
     return `<div class="card">
-  <div class="card-src"><span>${escapeHtml(channel?.emoji ?? '🔔')}</span><span>${escapeHtml(channel?.title ?? '')}</span><span>·</span><span>${homework ? (m.kind === 'reminder' ? '作业截止提醒' : '本地作业信息') : item.real ? (item.analysisState === 'ready' ? '已整理' : '原站通知') : '示例'}</span></div>
+  <div class="card-src"><span>${escapeHtml(channel?.emoji ?? '🔔')}</span><span>${escapeHtml(channel?.title ?? '')}</span><span>·</span><span>${homework ? (m.kind === 'reminder' ? '作业截止提醒' : m.queryResult ? '作业查询结果' : '本地作业信息') : item.real ? (item.analysisState === 'ready' ? '已整理' : '原站通知') : '示例'}</span></div>
   ${homework ? '' : item.real ? `<details><summary>原标题</summary><div>${escapeHtml(item.title ?? '')}</div></details>` : `<div class="card-title">${escapeHtml(item.title ?? '')}</div>`}
   ${!item.real && NOTICE_CATEGORIES[item.category] ? `<div class="card-meta"><span>${escapeHtml(NOTICE_CATEGORIES[item.category])}</span></div>` : ''}
   ${!homework && item.real && !item.publishedDate ? '<div class="card-meta"><span>原站发布日期待补齐</span></div>' : ''}

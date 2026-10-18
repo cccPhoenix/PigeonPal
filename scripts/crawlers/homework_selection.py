@@ -129,11 +129,11 @@ def parse_homework_query(text, channel_id='bot'):
     return query
 
 
-def homework_query_reply(rows, text, channel_id='bot', *, now=None):
+def homework_query_reply(rows, text, channel_id='bot', *, now=None, selected=None):
     query = parse_homework_query(text, channel_id)
     if query is None:
         return None
-    selected = select_homework(rows, now=now, query=query)
+    selected = select_homework(rows, now=now, query=query) if selected is None else selected
     if not selected:
         return '本机当前没有符合条件的作业。只查询尚未截止、未关闭的当前作业；未知提交状态不会算作“未提交”。若刚启动，作业列表可能仍在采集中。'
     label = {'unsubmitted':'明确未提交', 'submitted':'已提交', 'pending':'待处理'}[query['status']]

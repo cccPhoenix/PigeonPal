@@ -70,8 +70,12 @@ class HomeworkSelectionTests(unittest.TestCase):
                 result=service.respond({'text':'列出还没有提交的作业，从近到远五条','channelId':'bot','requestId':'local-homework-test'})
             event=result['events'][0]
             self.assertTrue(event['localOnly'])
-            self.assertIn('5',event['text']);self.assertIn('练习10',event['text'])
-            self.assertNotIn('练习23',event['text'])
+            self.assertIn('5',event['text'])
+            cards=[e for e in result['events'] if e.get('queryResult')]
+            self.assertEqual(len(cards),5)
+            self.assertEqual(cards[0]['item']['title'],'练习10')
+            self.assertTrue(all(e['kind']=='notice' and e['localOnly'] for e in cards))
+            self.assertNotIn('练习23',[e['item']['title'] for e in cards])
             client.complete.assert_not_called()
             replay=service.respond({'text':'列出还没有提交的作业，从近到远五条','channelId':'bot','requestId':'local-homework-test'})
             self.assertEqual(result,replay)
