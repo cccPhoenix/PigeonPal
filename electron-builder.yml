@@ -1,0 +1,41 @@
+appId: cn.pigeonpal.desktop
+productName: 鸽友 PigeonPal
+executableName: PigeonPal
+artifactName: PigeonPal-Setup-${version}-${arch}.${ext}
+asar: true
+directories:
+  output: dist
+  buildResources: build
+files:
+  - desktop/**/*.cjs
+  - web/assets/icon.png
+  - package.json
+extraResources:
+  - from: build/backend-dist/PigeonPalService
+    to: backend/PigeonPalService
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.ico
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 鸽友 PigeonPal
+  deleteAppDataOnUninstall: false
+
+mac:
+  icon: web/assets/icon.png
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  target:
+    - target: dmg
+      arch: [arm64]
+  artifactName: PigeonPal-${version}-mac-${arch}.${ext}
+  category: public.app-category.productivity
+  identity: "-"
+  notarize: false

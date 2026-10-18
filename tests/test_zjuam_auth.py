@@ -255,6 +255,28 @@ class ZjuamAuthTests(unittest.TestCase):
                 ], "login_rejected")
                 self.assertEqual([call["method"] for call in client.opener.calls], ["GET", "GET", "POST", "GET"])
 
+    def test_cas_service_redirect_is_not_itself_sso_confirmation(self):
+        destination = LOGIN_URL + "?service=https%3A%2F%2Fportal.zju.edu.cn"
+        error, client = self.error(initial() + [
+            Response(302, Location=destination, Set_Cookie=LOGIN_COOKIE),
+            Response(302, Location=destination),
+        ], "invalid_cas_page")
+        self.assertEqual(error.reason, "sso_not_confirmed")
+        self.assertEqual([call["url"] for call in client.opener.calls],
+                         [LOGIN_URL, PUBLIC_KEY_URL, LOGIN_URL, LOGIN_URL])
+
+    def test_cas_service_recovery_rejects_untrusted_or_ambiguous_targets(self):
+        for query in (
+            "service=https%3A%2F%2Fevil.example%2F",
+            "service=https%3A%2F%2Fportal.zju.edu.cn&service=https%3A%2F%2Fevil.example%2F",
+            "service=https%3A%2F%2Fuser%3Apassword%40portal.zju.edu.cn%2F",
+        ):
+            with self.subTest(query=query):
+                _, client = self.error(initial() + [
+                    Response(302, Location=LOGIN_URL + "?" + query, Set_Cookie=LOGIN_COOKIE),
+                ], "unexpected_destination")
+                self.assertEqual(len(client.opener.calls), 3)
+
     def test_redirect_failures_expose_only_fixed_reason_codes(self):
         error, client = self.error(initial() + [Response(302, Location="https://evil.example/?ticket=fixture-sensitive-ticket")], "unexpected_destination")
         self.assertEqual(error.reason, "blocked_host")
@@ -270,7 +292,7 @@ class ZjuamAuthTests(unittest.TestCase):
                 _CASClient.redirect_url(destination)
             self.assertEqual(raised.exception.reason, reason)
 
-    def test_redirects_never_replay_post_and_other_hosts_and_services_are_rejected(self):
+    def test_redirects_never_replay_post_and_untrusted_hosts_are_rejected(self):
         for status in (307, 308):
             with self.subTest(status=status):
                 client, _, _, cancel = self.client(initial() + [
@@ -279,8 +301,22 @@ class ZjuamAuthTests(unittest.TestCase):
                 ])
                 self.login(client, cancel)
                 self.assertEqual([call["method"] for call in client.opener.calls], ["GET", "GET", "POST", "GET"])
-        for destination in ("https://evil.example/?ticket=fixture-ticket", "https://itc.zju.edu.cn/90618/list.psp", LOGIN_URL + "?service=https%3A%2F%2Fitc.zju.edu.cn"):
-            self.error(initial() + [Response(302, Location=destination)], "unexpected_destination")
+        self.error(initial() + [Response(302, Location="https://evil.example/?ticket=fixture-ticket")], "unexpected_destination")
+
+    def test_retained_session_cookie_requires_confirmation_after_school_redirect(self):
+        for destination in ("https://itc.zju.edu.cn/90618/list.psp", LOGIN_URL + "?service=https%3A%2F%2Fitc.zju.edu.cn"):
+            with self.subTest(destination=destination):
+                _, client = self.error(initial() + [
+                    Response(302, Location=destination), Response(body=FORM),
+                ], "login_rejected")
+                self.assertEqual([call["url"] for call in client.opener.calls],
+                                 [LOGIN_URL, PUBLIC_KEY_URL, LOGIN_URL, LOGIN_URL])
+                client, _, _, cancel = self.client(initial() + [
+                    Response(302, Location=destination), Response(body=SUCCESS),
+                ])
+                self.login(client, cancel)
+                self.assertEqual(client.opener.calls[-1]["url"], LOGIN_URL)
+                self.assertIn("JSESSIONID=fixture-form-cookie", client.opener.calls[-1]["cookie"])
 
     def test_rate_limit_and_network_errors_are_fixed_and_redacted(self):
         error, _ = self.error([Response(429, Retry_After="600")], "rate_limited")
@@ -292,15 +328,30 @@ class ZjuamAuthTests(unittest.TestCase):
     def test_success_requires_cookie_and_explicit_success_without_any_login_form(self):
         for response in (
             Response(body="<html>欢迎</html>", Set_Cookie=LOGIN_COOKIE),
-            Response(body=SUCCESS),
-            Response(body=SUCCESS, Set_Cookie="SESSION=fixture-cookie; Path=/cas; Secure"),
             Response(body='<h1>登录成功指南</h1>', Set_Cookie=LOGIN_COOKIE),
             Response(body='<script>登录成功</script>', Set_Cookie=LOGIN_COOKIE),
         ):
-            self.error(initial() + [response], "invalid_cas_page")
+            with self.subTest(body=response.body):
+                self.error(initial() + [response], "invalid_cas_page")
+        for cookie in (None, "_csrf=csrf-only; Path=/cas; Secure"):
+            with self.subTest(cookie=cookie):
+                headers = {} if cookie is None else {"Set_Cookie": cookie}
+                self.error([Response(body=FORM, **headers), Response(body=PUBLIC_KEY),
+                            Response(body=SUCCESS)], "invalid_cas_page")
         self.error(initial() + [Response(body=SUCCESS + FORM, Set_Cookie=LOGIN_COOKIE)], "login_rejected")
         self.error(initial() + [Response(body=SUCCESS + '<form><input name="username"><input name="password"></form>', Set_Cookie=LOGIN_COOKIE)], "login_rejected")
         self.error(initial() + [Response(body=SUCCESS + '<p>用户名或密码错误</p>', Set_Cookie=LOGIN_COOKIE)], "invalid_credentials")
+
+    def test_explicit_cas_success_accepts_retained_or_deployment_session_cookie(self):
+        for cookie in (None, "SESSION=fixture-cookie; Path=/cas; Secure"):
+            with self.subTest(cookie=cookie):
+                responses = initial() if cookie is None else [Response(body=FORM), Response(body=PUBLIC_KEY)]
+                headers = {} if cookie is None else {"Set_Cookie": cookie}
+                client, _, _, cancel = self.client(responses + [Response(body=SUCCESS, **headers)])
+                result = self.login(client, cancel)
+                expected_name = "JSESSIONID" if cookie is None else "SESSION"
+                self.assertTrue(any(item.name == expected_name for item in result.session.cookies))
+                self.assertEqual(len(client.opener.calls), 3)
 
     def test_confirmation_rejects_generic_page_even_with_new_sso_cookie(self):
         error, client = self.error(initial() + [

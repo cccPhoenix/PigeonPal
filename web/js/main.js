@@ -1,3 +1,4 @@
+import { connectDesktop } from './services/desktop.js'
 import { createStore } from './store.js'
 import { newId, pendingReminders } from './reminders.js'
 import { markHTML, setMarkState, startGaze } from './mark/index.js'
@@ -510,6 +511,7 @@ async function refreshRuntime() {
 }
 
 // ------------------------------------------------------------------- boot
+connectDesktop(store, select)
 applyPrefs()
 sidebar.render()
 select(active)

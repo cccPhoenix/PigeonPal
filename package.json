@@ -1,6 +1,6 @@
 {
   "name": "pigeonpal",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,6 +8,17 @@
     "test": "node --test tests/*.test.mjs",
     "crawler": "python scripts/pigeonpal_crawler.py run",
     "crawler:once": "python scripts/pigeonpal_crawler.py run --once",
-    "crawler:status": "python scripts/pigeonpal_crawler.py status"
-  }
+    "crawler:status": "python scripts/pigeonpal_crawler.py status",
+    "desktop": "electron .",
+    "build:backend": "python build/build_backend.py",
+    "dist:win": "npm run build:backend && electron-builder --win nsis --x64 --publish never",
+    "dist:mac": "npm run build:backend && electron-builder --mac dmg --arm64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.9.0",
+    "electron-builder": "26.15.3"
+  },
+  "main": "desktop/main.cjs",
+  "description": "鸽友：本地校园伙伴、校园通知与提醒",
+  "author": "PigeonPal contributors"
 }

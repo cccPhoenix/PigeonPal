@@ -49,3 +49,20 @@ class SourceFirstSyncTests(unittest.TestCase):
             backend._run_due_sources()
         self.assertEqual([call.args[0].source.id for call in backend.engine.run_source.call_args_list], ['yunfeng', 'itc'])
         backend.site_auth.prepare.assert_not_called()
+
+    def test_worker_recovers_after_temporary_failure_instead_of_exiting(self):
+        backend = self.backend({'yunfeng': 'ready'})
+        backend.worker_error = None
+        backend.auth.tick = Mock(side_effect=[OSError('temporary write failure'), None])
+        backend._run_due_sources = Mock()
+        waits = []
+        def wait(seconds):
+            waits.append(seconds)
+            if len(waits) == 2:
+                backend.stop.set()
+        backend.stop.wait = wait
+        backend._work()
+        self.assertEqual(backend.auth.tick.call_count, 2)
+        backend._run_due_sources.assert_called_once()
+        self.assertEqual(waits, [30, 2])
+        self.assertIsNone(backend.worker_error)
