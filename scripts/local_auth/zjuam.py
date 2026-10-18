@@ -67,6 +67,10 @@ class LoginResult:
 class _SignedInRedirect(Exception):
     """CAS returned a school destination; confirm its session without visiting it."""
 
+    def __init__(self, *, proves_sso=True):
+        self.proves_sso = proves_sso
+        super().__init__()
+
 
 class _HostCookiePolicy(http.cookiejar.DefaultCookiePolicy):
     """Accept legal campus-domain CAS cookies; never send them to other hosts."""
@@ -345,11 +349,12 @@ class _CASClient:
                     try:
                         return None, self.redirect_url(destination)
                     except AuthError as error:
+                        post_login_destination = _school_destination(destination)
                         if (sso_baseline is not None
                                 and error.reason in {"blocked_host", "blocked_scheme", "blocked_port", "blocked_service"}
-                                and _school_destination(destination)
+                                and (post_login_destination or _school_service_redirect(destination))
                                 and _login_cookies(self.jar, self.wall_time())):
-                            raise _SignedInRedirect() from None
+                            raise _SignedInRedirect(proves_sso=post_login_destination) from None
                         raise
                 if status in {429, 503}:
                     raise AuthError("rate_limited", retry_after_seconds(response.headers.get("Retry-After"), self.wall_time()))
@@ -429,6 +434,23 @@ def _school_destination(url):
         return False
 
 
+def _school_service_redirect(url):
+    """A CAS service redirect can trigger clean CAS confirmation, never prove it."""
+    try:
+        parts = urlsplit(url)
+        services = parse_qs(parts.query, keep_blank_values=True)
+        return bool(
+            parts.hostname in HOSTS and _is_login_path(parts.path)
+            and not parts.username and not parts.password and not parts.fragment
+            and parts.scheme in {"https", "http"}
+            and parts.port in {None, 443 if parts.scheme == "https" else 80}
+            and set(services) == {"service"} and len(services["service"]) == 1
+            and _school_destination(services["service"][0])
+        )
+    except (TypeError, ValueError):
+        return False
+
+
 def _login_cookies(jar, now):
     """Private fingerprints of non-CSRF session cookies applicable to CAS.
 
@@ -463,10 +485,10 @@ def _confirm_sso(client, baseline):
     client.emit("verifying_login")
     try:
         html, _ = client.follow(LOGIN_URL, sso_baseline=baseline)
-    except _SignedInRedirect:
+    except _SignedInRedirect as redirect:
         # CAS accepted the cookie presented to its login endpoint and chose a
         # post-login destination. We only observe that response, never visit it.
-        if client.login_cookie_sent and _login_cookies(client.jar, client.wall_time()):
+        if redirect.proves_sso and client.login_cookie_sent and _login_cookies(client.jar, client.wall_time()):
             return
         raise AuthError("invalid_cas_page", reason="sso_not_confirmed") from None
     page = _Page(html)

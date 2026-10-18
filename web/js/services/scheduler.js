@@ -15,6 +15,7 @@ export function startScheduler({ due, deliver, intervalMs = 5000 }) {
 // System notifications, used only when the window is in the background. The desktop
 // shell will swap this for native notifications.
 export function systemNotify(title, body) {
+  if (globalThis.pigeonpalDesktop) return // Native monitor owns delivery, including hidden-window delivery.
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted' || document.visibilityState === 'visible') return
   try { new Notification(title, { body, silent: false }) } catch { /* not supported here */ }
 }

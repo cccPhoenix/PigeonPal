@@ -1,10 +1,11 @@
+import { connectDesktop } from './services/desktop.js'
 import { createStore } from './store.js'
 import { newId, pendingReminders } from './reminders.js'
 import { markHTML, setMarkState, startGaze } from './mark/index.js'
 import { createAIChat, buildChatHistory, GREETING } from './services/chat.js'
 import { startFeed, localAdapters, noticeCopy, eventPhrase, NOTICE_CATEGORIES, LOCAL_CHANNELS } from './services/sources.js'
 import { analysisFields, decisionCopy } from './services/notice-summary.js'
-import { homeworkDetailHTML, isHomework } from './services/homework.js'
+import { homeworkDetailHTML, isHomework, homeworkReminderMessage } from './services/homework.js'
 import { systemNotify } from './services/scheduler.js'
 import { createSidebar } from './ui/sidebar.js'
 import { createHeader } from './ui/header.js'
@@ -110,6 +111,7 @@ store.on('message', m => {
   transcript.append(m)
   if (m.channelId === active && document.visibilityState === 'visible') store.markRead(m.channelId)
 })
+store.on('homework-snapshot', ({ channelId }) => { sidebar.update(channelId); transcript.syncHomeworkSnapshot(channelId) })
 store.on('unread', id => sidebar.update(id))
 store.on('message-updated', message => { sidebar.update(message.channelId); transcript.refreshNotice(message) })
 store.on('channels', () => sidebar.render())
@@ -181,7 +183,7 @@ async function run(ch, stream) {
         if (ch === active) transcript.showTyping()
         await sleep(event.ms)
       } else if (event.type === 'message') {
-        store.addMessage(ch, { role: 'bot', text: event.text, ...(event.quoteId ? { quoteId: event.quoteId } : {}) }, { unread: ch !== active })
+        store.addMessage(ch, { role: 'bot', text: event.text, ...(event.kind === 'notice' && event.queryResult === true && isHomework(event.item) ? { kind: 'notice', queryResult: true, item: event.item } : {}), ...(event.localOnly === true ? { localOnly: true } : {}), ...(event.quoteId ? { quoteId: event.quoteId } : {}) }, { unread: ch !== active })
         await sleep(260)
       } else if (event.type === 'action') {
         applyAction(ch, event)
@@ -490,7 +492,7 @@ async function refreshRuntime() {
   runtimePolling = true
   try {
     if (!runtimeInitialized) {
-      const legacy = store.state.reminders.filter(reminder => !reminder.id.startsWith('rem-ddl-') && !reminder.id.startsWith('rem-chat-'))
+      const legacy = store.state.reminders.filter(reminder => !reminder.id.startsWith('rem-ddl-') && !reminder.id.startsWith('rem-chat-') && !reminder.id.startsWith('rem-hw-'))
       for (let index = 0; index < legacy.length; index += 200) await apiClient.importReminders(legacy.slice(index, index + 200))
       runtimeInitialized = true
     }
@@ -499,8 +501,8 @@ async function refreshRuntime() {
     for (const event of events.events || []) {
       if (store.message(event.id)) continue
       const channelId = store.channel(event.channelId) ? event.channelId : 'bot'
-      const message = store.addMessage(channelId, { id: event.id, role: 'bot', kind: 'reminder', text: event.text,
-        at: event.at, reminderId: event.reminderId }, { unread: channelId !== active })
+      const fields = isHomework(event.item) ? homeworkReminderMessage(event) : { id: event.id, kind: 'reminder', text: event.text, at: event.at, reminderId: event.reminderId }
+      const message = store.addMessage(channelId, { ...fields, role: 'bot' }, { unread: channelId !== active })
       if (Date.now() - event.at < 60_000) announce(channelId, store.state.profile.botName, plain(message.text, store.state.profile))
     }
     if (Number.isSafeInteger(events.cursor) && events.cursor >= 0) store.setEventCursor(events.cursor)
@@ -509,16 +511,26 @@ async function refreshRuntime() {
 }
 
 // ------------------------------------------------------------------- boot
+connectDesktop(store, select)
 applyPrefs()
 sidebar.render()
 select(active)
 startGaze(document)
 refreshSourceStates()
 
+let homeworkSnapshotReady = false
 startFeed({
   adapters: services.sources,
   intervalMs: services.feedInterval,
   seen: { has: id => store.state.seenItems.includes(id), add: id => { store.state.seenItems.push(id); store.save() } },
+  onSnapshot(channelId, items) {
+    if (channelId !== 'src-xzzd') return
+    const { added } = store.syncHomeworkSnapshot(items, { unread: channelId !== active })
+    if (homeworkSnapshotReady && added.some(message => Date.now() - (items.find(item => item.noticeId === message.item.noticeId)?.receivedAt || 0) < 60_000)) {
+      announce(channelId, '学在浙大·作业', `作业清单已更新，当前展示 ${store.state.messages[channelId].filter(message => message.kind === 'notice').length} 条。`)
+    }
+    homeworkSnapshotReady = true
+  },
   onItem(channelId, item) {
     if (!store.channel(channelId)) return
     const live = Number.isFinite(item.receivedAt) && Date.now() - item.receivedAt < 60_000

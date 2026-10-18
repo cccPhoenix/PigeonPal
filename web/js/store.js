@@ -5,7 +5,7 @@ import { newId } from './reminders.js'
 import { hasLook } from './mark/looks.js'
 import { LOCAL_CHANNELS } from './services/sources.js'
 import { DECISION_FIELDS, decisionCopy } from './services/notice-summary.js'
-import { cleanHomework, isHomework } from './services/homework.js'
+import { cleanHomework, isHomework, isHomeworkCard, defaultHomeworkMessages, homeworkCopy } from './services/homework.js'
 
 export const STORAGE_KEY = 'pigeonpal.v1'
 const KINDS = ['text', 'notice', 'reminder']
@@ -70,12 +70,15 @@ export function hydrate(raw) {
       .map(m => ({ id: m.id, channelId: channel.id, role: m.role, kind: m.kind, text: m.role === 'bot' ? Array.from(m.text).slice(0, 20000).join('') : m.text.slice(0, 4000), at: m.at,
         ...(typeof m.quoteId === 'string' ? { quoteId: m.quoteId } : {}),
         ...(typeof m.reminderId === 'string' ? { reminderId: m.reminderId } : {}),
-        ...(m.kind === 'notice' && m.item && typeof m.item === 'object' ? { item: cleanItem(m.item) } : {}) }))
+        ...(m.localOnly === true ? { localOnly: true } : {}),
+        ...(m.queryResult === true && isHomework(m.item) ? { queryResult: true } : {}),
+        ...(['notice', 'reminder'].includes(m.kind) && m.item && typeof m.item === 'object' ? { item: cleanItem(m.item) } : {}) }))
     for (const message of fresh.messages[channel.id]) {
       if (message.kind === 'notice' && message.item?.real) message.text = decisionCopy(message.item)
     }
+    if (channel.id === 'src-xzzd') fresh.messages[channel.id] = defaultHomeworkMessages(fresh.messages[channel.id])
     const unread = stored.unread?.[channel.id]
-    if (Number.isSafeInteger(unread) && unread > 0) fresh.unread[channel.id] = unread
+    if (Number.isSafeInteger(unread) && unread > 0) fresh.unread[channel.id] = channel.id === 'src-xzzd' ? Math.min(unread, fresh.messages[channel.id].length) : unread
   }
   if (Array.isArray(stored.reminders)) {
     fresh.reminders = stored.reminders.filter(r => r && typeof r.id === 'string' && typeof r.title === 'string' && Number.isFinite(r.dueAt) && ['pending', 'done', 'cancelled'].includes(r.status))
@@ -142,6 +145,22 @@ export function createStore(storage = globalThis.localStorage) {
       save()
       emit('message-updated', existing)
       return { message: existing, created: false, revised }
+    },
+    syncHomeworkSnapshot(items, { now = Date.now(), unread = false } = {}) {
+      const channelId = 'src-xzzd', previous = state.messages[channelId] || []
+      const cards = previous.filter(isHomeworkCard)
+      const byNotice = new Map(cards.map(message => [message.item.noticeId, message]))
+      const incoming = items.map(item => ({ id: byNotice.get(item.noticeId)?.id || item.id || newId('msg'),
+        role: 'bot', kind: 'notice', channelId, at: item.publishedAt || now, text: homeworkCopy(item), item: cleanItem(item) }))
+      const selected = defaultHomeworkMessages(incoming, now)
+      const next = [...selected, ...previous.filter(message => !isHomeworkCard(message))]
+      if (JSON.stringify(next) === JSON.stringify(previous)) return { changed: false, added: [] }
+      const added = selected.filter(message => !byNotice.has(message.item.noticeId))
+      state.messages[channelId] = next
+      state.unread[channelId] = unread ? Math.min(8, (state.unread[channelId] || 0) + added.length) : 0
+      save()
+      emit('homework-snapshot', { channelId })
+      return { changed: true, added }
     },
     syncReminders(rows) {
       for (const incoming of rows) {

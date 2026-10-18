@@ -1,0 +1,90 @@
+// Native delivery is independent of renderer timers. Only IDs and preferences persist.
+const defaults = () => ({ version:1, preferences:{ enabled:true, proactive:true, botName:'小浙', nickname:'同学', quietStart:'23:00', quietEnd:'07:30', muted:[] }, sources:{}, reminders:{} })
+const sourceIds = new Set(['yunfeng','itc','qsxy','bksy','xzzd'])
+function cleanPreferences(p, before=defaults().preferences) {
+  const out={...before}
+  for(const k of ['enabled','proactive']) if(typeof p?.[k]==='boolean') out[k]=p[k]
+  for(const k of ['botName','nickname']) if(typeof p?.[k]==='string') out[k]=Array.from(p[k]).slice(0,12).join('')
+  for(const k of ['quietStart','quietEnd']) if(/^([01]\d|2[0-3]):[0-5]\d$/.test(p?.[k]??'')) out[k]=p[k]
+  if(Array.isArray(p?.muted)) out.muted=p.muted.filter(v=>typeof v==='string' && /^src-[\w-]{1,48}$/.test(v)).slice(0,100)
+  return out
+}
+function allowedNow(p, channelId, now) {
+  if(!p.enabled || !p.proactive || p.muted.includes(channelId)) return false
+  const clock=new Date(now+8*3600000).toISOString().slice(11,16)
+  const {quietStart:a,quietEnd:b}=p
+  return a===b || !(a<b ? clock>=a&&clock<b : clock>=a||clock<b)
+}
+class NotificationMonitor {
+  constructor({load,save,api,notify,now=Date.now}) {
+    const raw=load(); this.state=raw?.version===1&&raw.sources&&raw.reminders?raw:defaults()
+    this.state.preferences=cleanPreferences(raw?.preferences)
+    this.save=save; this.api=api; this.notify=notify; this.now=now; this.polling=false
+  }
+  preferences(patch) {
+    const next={...this.state, preferences:cleanPreferences(patch,this.state.preferences)}
+    this.save(next); this.state=next
+    return {...next.preferences}
+  }
+  commit(next) { next.preferences=this.state.preferences; this.save(next); this.state=next }
+  async send(rows, title, channelId, refresh=null) {
+    if(!rows.length || !allowedNow(this.state.preferences,channelId,this.now())) return true
+    const groups=rows.length>3?[rows]:rows.map(row=>[row])
+    for(let group of groups) {
+      if(refresh) group=await refresh(group)
+      if(!group.length || !allowedNow(this.state.preferences,channelId,this.now())) continue
+      const chunks=group.length>3?[{title,channelId,body:`有 ${group.length} 条新消息，点击打开鸽友查看。`}]:group.map(row=>({title,channelId,body:Array.from(row.title||'有一条新消息').slice(0,160).join('')}))
+    for(const chunk of chunks) if(!await this.notify(chunk)) return false
+    }
+    return true
+  }
+  async poll() {
+    if(this.polling) return
+    this.polling=true
+    try {
+      // Reminders are retained in runtime-state, unlike its bounded event log.
+      // deliveredAt also distinguishes snoozes. Completed/cancelled are never toasted.
+      const {reminders}=await this.api('/api/reminders')
+      if(!Array.isArray(reminders)) throw new Error('invalid_reminders')
+      const next=structuredClone(this.state), groups=new Map()
+      for(const r of reminders) {
+        if(typeof r.id!=='string' || !Number.isFinite(r.deliveredAt) || r.status!=='pending' || next.reminders[r.id]===r.deliveredAt) continue
+        const channelId=/^(bot|src-[\w-]{1,48})$/.test(r.channelId)?r.channelId:'bot'
+        if(!groups.has(channelId)) groups.set(channelId,[])
+        groups.get(channelId).push(r)
+      }
+      for(const [channelId,rows] of groups) {
+        if(await this.send(rows,`${this.state.preferences.botName} · 提醒到时间了`,channelId,async queued=>{
+          const fresh=(await this.api('/api/reminders')).reminders
+          return queued.filter(old=>fresh.some(r=>r.id===old.id&&r.status==='pending'&&r.deliveredAt===old.deliveredAt))
+        })) for(const r of rows) next.reminders[r.id]=r.deliveredAt
+      }
+      this.commit(next)
+      const {sources}=await this.api('/api/sources')
+      for(const source of sources??[]) {
+        if(!sourceIds.has(source.id) || !['ready','partial'].includes(source.state)) continue
+        try {
+          const items=[], offsets=new Set(); let offset=0
+          do {
+            if(offsets.has(offset)) throw new Error('invalid_pagination')
+            offsets.add(offset)
+            const page=await this.api(`/api/notification-candidates?source=${source.id}&offset=${offset}`)
+            if(!Array.isArray(page.items)) throw new Error('invalid_notices')
+            items.push(...page.items); offset=page.nextOffset
+          } while(Number.isSafeInteger(offset)&&offset>0)
+          const next=structuredClone(this.state), before=next.sources[source.id]
+          const ids=items.filter(row=>typeof row.id==='string'&&row.id.startsWith(source.id+':'))
+          // Per-source first successful snapshot, not an empty pre-login response.
+          if(!before) next.sources[source.id]=Object.fromEntries(ids.map(row=>[row.id,true]))
+          else {
+            const fresh=ids.filter(row=>!before[row.id])
+            if(!await this.send(fresh.filter(row=>row.notifyEligible!==false),source.title||'校园新通知',`src-${source.id}`)) continue
+            for(const row of fresh) before[row.id]=true
+          }
+          this.commit(next)
+        } catch { /* One inaccessible source must not block others or reminders. */ }
+      }
+    } finally { this.polling=false }
+  }
+}
+module.exports={NotificationMonitor,defaults,allowedNow,cleanPreferences}

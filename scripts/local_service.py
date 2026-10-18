@@ -20,6 +20,7 @@ from crawlers.engine import CrawlEngine
 from crawlers.http import CrawlFailure, SlowClient
 from crawlers.xzzd import XzzdClient
 from crawlers.sources import SOURCES
+from crawlers.homework_selection import select_homework, is_current_homework
 from crawlers.storage import NoticeStore, StorageError
 from local_auth.manager import AuthActionError, AuthManager
 from local_auth.site_sessions import SiteSessionError, SiteSessionProvider
@@ -29,10 +30,11 @@ from notice_ai.chat import ChatService
 from notice_ai.client import ModelClient
 from notice_ai.config import AISettings
 from notice_ai.runtime import RuntimeStore
+from notice_ai.homework import reconcile_homework
 from notice_ai.schema import AIError
 from notice_ai.service import NoticeProcessor
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 WEB = ROOT / "web"
 MAX_BODY = 8192
 
@@ -74,6 +76,10 @@ class LocalBackend:
             self.thread = threading.Thread(target=self._work, name="pigeonpal-crawler", daemon=True)
             self.thread.start()
             self.ai.start()
+            self.start_reminders()
+
+    def start_reminders(self):
+        if self.reminder_thread is None:
             self.reminder_thread = threading.Thread(target=self._reminders, name="pigeonpal-reminders", daemon=True)
             self.reminder_thread.start()
 
@@ -82,7 +88,9 @@ class LocalBackend:
         failed = False
         while not self.stop.is_set():
             try:
-                self.runtime.tick()
+                if time.time() >= next_reconcile:
+                    reconcile_homework(self.runtime, self.store.export_items("xzzd"))
+                self.runtime.tick(homework_lookup=self.store.get_notice)
                 if time.time() >= next_reconcile:
                     self.ai.reconcile_deadlines()
                     next_reconcile = time.time() + 30
@@ -129,6 +137,8 @@ class LocalBackend:
         if not 1 <= limit <= 100 or offset < 0:
             raise AIError("invalid_input", 400)
         rows = self.store.export_items(source_id)
+        if source_id == "xzzd":
+            rows = select_homework(rows)
         items = []
         for row in rows[offset:offset + limit]:
             items.append({key: row[key] for key in ("id", "sourceId", "title", "url", "publishedAt", "state", "version", "contentHash", "lastChangedAt", "firstSeenAt")})
@@ -153,14 +163,24 @@ class LocalBackend:
             raise AIError("notice_not_found", 404)
         return {**row, "analysis": self.ai.analysis(row)}
 
+    def notification_candidates(self, source_id, offset=0):
+        """Complete ingestion identity index, independent of the bounded UI view."""
+        if source_id not in SOURCES or offset < 0:
+            raise AIError("invalid_input", 400)
+        rows = self.store.export_items(source_id)
+        items = [{"id": row["id"], "title": row["title"], "notifyEligible": source_id != "xzzd" or (
+            is_current_homework(row, time.time()) and row.get("homework", {}).get("submissionStatus") != "submitted"
+        )} for row in rows[offset:offset + 100]]
+        return {"items": items, "nextOffset": offset + 100 if offset + 100 < len(rows) else None}
+
     def _sleep(self, seconds):
         if self.stop.wait(seconds):
             raise KeyboardInterrupt
 
     def _work(self):
         previous_session = None
-        try:
-            while not self.stop.is_set():
+        while not self.stop.is_set():
+            try:
                 self.auth.tick()
                 session = self.auth.campus_session()
                 if session is not None and session is not previous_session:
@@ -169,15 +189,25 @@ class LocalBackend:
                             runtime.next_due = time.time()
                 previous_session = session
                 self._run_due_sources()
+                self.worker_error = None
                 self.stop.wait(2)
-        except KeyboardInterrupt:
-            pass
-        except Exception:
-            self.worker_error = "crawler_worker_error"
-            print("crawler: crawler_worker_error", file=sys.stderr, flush=True)
+            except KeyboardInterrupt:
+                break
+            except Exception:
+                if self.worker_error != "crawler_worker_error":
+                    print("crawler: crawler_worker_error", file=sys.stderr, flush=True)
+                self.worker_error = "crawler_worker_error"
+                # A temporary storage/session failure must not kill all future
+                # collection until the user restarts the application.
+                self.stop.wait(30)
 
     def _run_due_sources(self):
-        for runtime in self.engine.runtimes.values():
+        # A new or newly authenticated homework channel must not wait behind
+        # every public site's paced detail fetches. Keep normal/backoff cadence.
+        runtimes = sorted(self.engine.runtimes.values(), key=lambda runtime: not (
+            runtime.source.kind == "homework" and runtime.state in {"idle", "auth_required"}
+        ))
+        for runtime in runtimes:
             if self.stop.is_set() or time.time() < runtime.next_due:
                 continue
             if runtime.source.requires_auth and self.auth.campus_session() is not None:
@@ -240,6 +270,9 @@ class LocalBackend:
 
 class LocalServer(ThreadingHTTPServer):
     daemon_threads = True
+    # The desktop protocol proxy loads the module graph concurrently. The
+    # socketserver default backlog of five can reset those local connections.
+    request_queue_size = 128
 
     def handle_error(self, request, client_address):
         print("local_service: request_error", file=sys.stderr, flush=True)
@@ -317,6 +350,12 @@ def handler_for(backend):
                         self._json(200, backend.notices(query.get("source", [None])[0], limit, offset))
                     elif path == "/api/notices/detail":
                         self._json(200, backend.notice_detail(query.get("noticeId", [""])[0]))
+                    elif path == "/api/notification-candidates":
+                        try:
+                            offset = int(query.get("offset", ["0"])[0])
+                        except ValueError:
+                            raise AIError("invalid_input", 400) from None
+                        self._json(200, backend.notification_candidates(query.get("source", [""])[0], offset))
                     elif path == "/api/reminders":
                         self._json(200, {"reminders": backend.runtime.reminders()})
                     elif path == "/api/events":

@@ -75,3 +75,75 @@ ${metadata.openAt ? `<p>开放：${escapeHtml(homeworkTime(metadata.openAt))}</p
 ${attachments.length ? `<div class="note">附件：${attachments.join('、')}</div>` : ''}
 <div class="btns">${url ? `<a class="btn primary" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" style="display:inline-grid;place-items:center;text-decoration:none">打开官方作业入口</a>` : '<span class="muted">官方作业入口暂不可用</span>'}<button class="btn" data-x="close">好的</button></div>`
 }
+
+
+// Only ordinary homework slots are sorted: conversations and six-hour reposts
+// keep their chronological positions. Date-only values are ordering keys only.
+export const isHomeworkCard = message => message?.kind === 'notice' && message.queryResult !== true && isHomework(message.item)
+export function orderHomeworkMessages(messages) {
+  const deadline = message => {
+    const value = cleanTime(message.item?.homework?.deadlineAt)
+    return value ? Date.parse(value.includes('T') ? value : `${value}T00:00:00+08:00`) : Infinity
+  }
+  const cards = messages.filter(isHomeworkCard).sort((a, b) => {
+    const left = deadline(a), right = deadline(b)
+    return left === right ? 0 : left - right
+  })
+  let index = 0
+  return messages.map(message => isHomeworkCard(message) ? cards[index++] : message)
+}
+
+export function homeworkReminderMessage(event) {
+  return { id: event.id, kind: 'reminder', text: `${event.text}\n\n${homeworkCopy(event.item)}`,
+    item: event.item, at: event.at, reminderId: event.reminderId }
+}
+
+
+// Reuse existing DOM nodes when ordering live cards, including their avatars.
+export function reorderHomeworkNodes(container, getMessage, doc = document) {
+  const nodes = [...container.querySelectorAll('.row')].filter(node => isHomeworkCard(getMessage(node.dataset.id)))
+  const ordered = orderHomeworkMessages(nodes.map(node => getMessage(node.dataset.id)))
+  if (ordered.every((message, index) => message.id === nodes[index].dataset.id)) return
+  const byId = new Map(nodes.map(node => [node.dataset.id, node]))
+  const markers = nodes.map(node => {
+    const marker = doc.createComment('homework-slot')
+    container.insertBefore(marker, node)
+    return marker
+  })
+  ordered.forEach((message, index) => {
+    const node = byId.get(message.id)
+    if (container.moveBefore) container.moveBefore(node, markers[index])
+    else container.insertBefore(node, markers[index])
+    markers[index].remove()
+  })
+}
+
+
+const timeOf = value => {
+  const clean = cleanTime(value)
+  return clean ? Date.parse(clean.includes('T') ? clean : `${clean}T00:00:00+08:00`) : null
+}
+export function isCurrentHomework(item, now = Date.now()) {
+  const hw = cleanHomework(item?.homework)
+  if (hw.isClosed === true || hw.submissionStatus === 'submitted') return false
+  const at = new Date(now + 8 * 3600000), year = at.getUTCFullYear(), month = at.getUTCMonth() + 1
+  const academicYear = month >= 9 ? year : year - 1, term = month >= 9 || month === 1 ? 1 : 2
+  const match = hw.courseCode.match(/(?:^|\()(\d{4})-(\d{4})-([123])(?:\)|[-_]|$)/)
+  if (match && (Number(match[1]) !== academicYear || Number(match[2]) !== academicYear + 1 || Number(match[3]) !== term)) return false
+  const opened = timeOf(hw.openAt), deadline = timeOf(hw.deadlineAt)
+  if (opened !== null && opened > now) return false
+  if (deadline !== null) return hw.deadlineAt.length === 10 ? deadline + 86400000 > now : deadline > now
+  const begin = Date.parse(`${term === 1 ? academicYear : academicYear + 1}-${term === 1 ? '09' : '02'}-01T00:00:00+08:00`)
+  return Boolean(match) || opened !== null && opened >= begin && opened <= now
+}
+
+export function defaultHomeworkMessages(messages, now = Date.now()) {
+  const active = messages.filter(isHomeworkCard).filter(message => isCurrentHomework(message.item, now))
+  const recentAt = message => timeOf(message.item.homework?.openAt) || message.item.publishedAt || message.at || 0
+  const recent = active.filter(message => message.item.homework?.submissionStatus === 'not_submitted')
+    .sort((a, b) => recentAt(b) - recentAt(a) || String(b.item.noticeId).localeCompare(String(a.item.noticeId))).slice(0, 5)
+  const nearest = active.filter(message => timeOf(message.item.homework?.deadlineAt) !== null)
+    .sort((a, b) => timeOf(a.item.homework.deadlineAt) - timeOf(b.item.homework.deadlineAt) || String(a.item.noticeId).localeCompare(String(b.item.noticeId))).slice(0, 3)
+  const ids = new Set([...recent, ...nearest].map(message => message.id))
+  return orderHomeworkMessages(messages.filter(message => !isHomeworkCard(message) || ids.has(message.id)))
+}

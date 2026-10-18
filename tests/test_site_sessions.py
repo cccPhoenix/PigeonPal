@@ -14,13 +14,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from crawlers.auth import AuthSession
 from local_auth.site_sessions import SiteSessionError, SiteSessionProvider
+from local_auth.zjuam import PUBLIC_KEY_URL
 
 
 ENDPOINT = "https://itc.zju.edu.cn/90618/list.psp"
 SERVICE = "http://itc.zju.edu.cn/90618/list.psp"
 CAS = "https://zjuam.zju.edu.cn"
 LANDING = CAS + "/cas/login?" + urlencode({"service": SERVICE})
-FORM = '<form><input name="username"><input name="password" type="password"><input name="execution" value="fixture"></form>'
+FORM = '<form method="post"><input name="username"><input name="password" type="password"><input name="execution" value="fixture"></form>'
 
 
 class Response:
@@ -59,9 +60,14 @@ class Manager:
     def __init__(self):
         self.current = central_session()
         self.invalidated = []
+        self.submissions = []
 
     def campus_session(self):
         return self.current
+
+    def campus_submission(self, expected_session, execution, public_key_text):
+        self.submissions.append((expected_session, execution, public_key_text))
+        return b"encrypted-fixture-body"
 
     def invalidate_campus(self, expected_session):
         self.invalidated.append(expected_session)
@@ -171,20 +177,63 @@ class SiteSessionTests(unittest.TestCase):
                 self.assertIsNone(provider.session_for("itc"))
                 self.assertEqual(list(transports[0].jar), [])
 
-    def test_only_official_cas_login_form_proves_sso_expired(self):
-        provider, manager, transports = self.provider([Response(302, Location=LANDING), Response(body=FORM)])
+    def test_source_cas_form_gets_one_submission_without_expiring_campus(self):
+        provider, manager, transports = self.provider([
+            Response(302, Location=LANDING), Response(body=FORM), Response(body="fixture-public-key"),
+        ] + complete()[1:])
         campus = manager.current
-        with self.assertRaisesRegex(SiteSessionError, "auth_required"):
+        provider.prepare("itc", threading.Event())
+        calls = transports[0].calls
+        self.assertEqual([call["method"] for call in calls], ["GET", "GET", "GET", "POST", "GET", "GET"])
+        self.assertEqual(calls[2]["url"], PUBLIC_KEY_URL)
+        self.assertEqual(calls[3]["url"], LANDING)
+        self.assertEqual(calls[3]["data"], b"encrypted-fixture-body")
+        self.assertTrue(all(call["data"] is None for call in calls[4:]))
+        self.assertEqual(manager.submissions, [(campus, "fixture", "fixture-public-key")])
+        self.assertIs(manager.current, campus)
+        self.assertEqual(manager.invalidated, [])
+
+    def test_rejected_source_cas_form_never_retries_or_revokes_campus(self):
+        provider, manager, transports = self.provider([
+            Response(302, Location=LANDING), Response(body=FORM), Response(body="fixture-public-key"),
+            Response(body=FORM, Set_Cookie="CASTGC=rejected-cookie; Path=/cas; Secure"),
+        ])
+        campus = manager.current
+        with self.assertRaisesRegex(SiteSessionError, "login_rejected"):
             provider.prepare("itc", threading.Event())
-        self.assertIsNone(manager.current)
-        self.assertEqual(manager.invalidated, [campus])
-        self.assertTrue(all(call["method"] == "GET" for call in transports[0].calls))
+        self.assertEqual(sum(call["method"] == "POST" for call in transports[0].calls), 1)
+        self.assertEqual(len(manager.submissions), 1)
+        self.assertIs(manager.current, campus)
+        self.assertEqual(manager.invalidated, [])
+        self.assertIsNone(provider.session_for("itc"))
+        self.assertEqual(next(cookie.value for cookie in campus.cookies if cookie.name == "CASTGC"), "campus-fixture")
+
+    def test_source_host_login_form_requires_auth_without_revoking_campus(self):
         provider, manager, _ = self.provider([Response(body=FORM)])
         campus = manager.current
         with self.assertRaisesRegex(SiteSessionError, "auth_required"):
             provider.prepare("itc", threading.Event())
         self.assertIs(manager.current, campus)
         self.assertEqual(manager.invalidated, [])
+
+    def test_same_cas_http_redirect_upgrades_before_any_cookie_or_post(self):
+        responses = complete()
+        responses[0] = Response(302, Location=LANDING.replace("https://zjuam", "http://zjuam"))
+        provider, manager, transports = self.provider(responses)
+        provider.prepare("itc", threading.Event())
+        self.assertEqual(transports[0].calls[1]["url"], LANDING)
+        self.assertTrue(all(call["url"].startswith("https://") for call in transports[0].calls))
+        self.assertEqual(manager.submissions, [])
+
+    def test_unsafe_form_action_is_rejected_before_key_or_credential_request(self):
+        for action in ("https://evil.example/steal", LANDING.replace("itc.zju", "courses.zju")):
+            with self.subTest(action=action):
+                form = FORM.replace('<form method="post">', '<form method="post" action="' + action + '">')
+                provider, manager, transports = self.provider([Response(302, Location=LANDING), Response(body=form)])
+                with self.assertRaisesRegex(SiteSessionError, "unexpected_destination"):
+                    provider.prepare("itc", threading.Event())
+                self.assertEqual(len(transports[0].calls), 2)
+                self.assertEqual(manager.submissions, [])
 
     def test_rebind_and_unbind_drop_old_source_sessions_without_network(self):
         provider, manager, transports = self.provider(complete())
@@ -242,7 +291,7 @@ class SiteSessionTests(unittest.TestCase):
     def test_unsafe_redirects_stop_before_following_or_forwarding_cookies(self):
         for destination in (
             "https://evil.example/?ticket=secret-fixture",
-            "http://zjuam.zju.edu.cn/cas/login?service=" + ENDPOINT,
+            "http://zjuam.zju.edu.cn:8080/cas/login?service=" + ENDPOINT,
             "https://zjuam.zju.edu.cn/cas/logout",
             "https://zjuam.zju.edu.cn/cas/login?" + urlencode({"service": "https://courses.zju.edu.cn/"}),
             "https://user:private@itc.zju.edu.cn/",

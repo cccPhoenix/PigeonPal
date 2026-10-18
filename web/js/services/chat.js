@@ -10,12 +10,14 @@
 // The app uses createAIChat. The old demo remains only for the legacy unit tests.
 
 import { parseWhen, reminderTitle } from './parse-time.js'
+import { isHomework, homeworkCopy } from './homework.js'
 import { whenLabel, personalize } from '../ui/format.js'
 
 const localHomeworkReminder = reminder => reminder?.channelId === 'src-xzzd' || String(reminder?.noticeId || '').startsWith('xzzd:')
 const localHomeworkMessage = (message, reminders = []) => {
   // User-typed text remains eligible, even inside the homework channel.
   if (message?.role === 'user') return false
+  if (message?.localOnly === true) return true
   if (message?.item?.homework || message?.item?.sourceId === 'xzzd' || message?.item?.kind === 'homework') return true
   if (message?.kind === 'reminder' && message?.channelId === 'src-xzzd') return true
   return Boolean(message?.reminderId && reminders.some(reminder => reminder.id === message.reminderId && localHomeworkReminder(reminder)))
@@ -68,7 +70,10 @@ export function createAIChat(client) {
         if (!event || typeof event !== 'object') continue
         if (event.type === 'action' && ['profile.update', 'reminder.upsert'].includes(event.name)) yield event
         else if (event.type === 'message' && typeof event.text === 'string') {
-          yield { type: 'message', text: event.text }
+          if (event.kind === 'notice' && event.queryResult === true && isHomework(event.item)) {
+            yield { type: 'message', kind: 'notice', queryResult: true, localOnly: true,
+              text: homeworkCopy(event.item), item: event.item }
+          } else yield { type: 'message', text: event.text, ...(event.localOnly === true ? { localOnly: true } : {}) }
         }
       }
     },

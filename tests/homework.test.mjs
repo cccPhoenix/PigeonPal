@@ -54,12 +54,11 @@ test('deadline and submission revisions update one persisted card', async () => 
   assert.equal(update.revised, true)
   assert.equal(update.message.id, first.message.id)
   assert.equal(store.state.messages['src-xzzd'].length, 1)
-  const restored = hydrate(JSON.stringify(store.state)).messages['src-xzzd'][0]
-  assert.equal(restored.item.homework.submissionStatus, 'submitted')
-  assert.equal(restored.item.homework.deadlineAt, '2026-10-21')
-  assert.match(restored.text, /原站仅提供日期/)
-  assert.match(restored.text, /已提交/)
-  assert.equal(restored.item.analysisState, 'local_only')
+  assert.equal(update.message.item.homework.submissionStatus, 'submitted')
+  assert.match(update.message.text, /已提交/)
+  // Completed tasks stay in the authoritative store, but leave the default UI.
+  const restored = hydrate(JSON.stringify(store.state)).messages['src-xzzd']
+  assert.equal(restored.length, 0)
 })
 
 test('unknown and closed states never imply successful submission or invented deadlines', () => {

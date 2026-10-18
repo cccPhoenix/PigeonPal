@@ -18,7 +18,7 @@ export const NOTICE_CATEGORIES = {
   deadline: '申请／报名', service: '校园服务', other: '其他通知',
 }
 
-export function startFeed({ adapters, seen, onItem, intervalMs = 60_000 }) {
+export function startFeed({ adapters, seen, onItem, onSnapshot, intervalMs = 60_000 }) {
   let stopped = false
   let polling = false
   const poll = async () => {
@@ -28,6 +28,7 @@ export function startFeed({ adapters, seen, onItem, intervalMs = 60_000 }) {
       for (const adapter of adapters) {
         try {
           const items = await adapter.fetch()
+          if (adapter.snapshot && onSnapshot) { onSnapshot(adapter.channelId, items); continue }
           for (const item of items.sort((a, b) => a.publishedAt - b.publishedAt)) {
             const key = item.revision ? `${item.id}:${item.revision}` : item.id
             if (stopped || seen.has(key)) continue
@@ -65,7 +66,7 @@ export function noticeCopy(item, now = Date.now()) {
 
 export function localAdapters(client) {
   return LOCAL_CHANNELS.map(channel => ({
-    id: `local-${channel.sourceId}`, channelId: channel.id,
+    id: `local-${channel.sourceId}`, channelId: channel.id, snapshot: channel.sourceId === 'xzzd',
     async fetch() {
       const rows = []
       let offset = 0

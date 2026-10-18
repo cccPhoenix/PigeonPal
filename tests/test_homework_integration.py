@@ -288,9 +288,10 @@ class HomeworkIntegrationTests(unittest.TestCase):
         homework = {**detail["homework"], "submissionStatus": "submitted"}
         self.now += 300
         backend.store.save_detail("xzzd", "xzzd:10", {**detail, "homework": homework}, detail["url"], self.now)
-        after = backend.notices("xzzd")["items"][0]
+        self.assertEqual(backend.notices("xzzd")["items"], [])
+        after = backend.notice_detail("xzzd:10")
         self.assertEqual(after["homework"]["submissionStatus"], "submitted")
-        self.assertNotEqual(after["revision"], listing["revision"])
+        self.assertGreater(after["version"], listing["version"])
         self.assertIsNone(after["analysis"]["result"])
 
 
