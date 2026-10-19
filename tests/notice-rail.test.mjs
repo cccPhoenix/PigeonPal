@@ -53,7 +53,8 @@ test('rail filter shows one source and marks the active chip', () => {
   store.upsertNotice('src-yunfeng', item('a', 'yunfeng', 5))
   store.upsertNotice('src-itc', item('b', 'itc', 6))
   const listRoot = pane()
-  const rail = createRail({ listRoot, detailRoot: pane(), store, client: { notice: async () => ({}) }, onRemind() {} })
+  const read = []
+  const rail = createRail({ listRoot, detailRoot: pane(), store, client: { notice: async () => ({}) }, onRemind() {}, onRead: sourceId => read.push(sourceId) })
   rail.render()
   assert.match(listRoot.innerHTML, /data-notice="a"/)
   assert.match(listRoot.innerHTML, /data-notice="b"/)
@@ -64,6 +65,7 @@ test('rail filter shows one source and marks the active chip', () => {
   assert.match(listRoot.innerHTML, /data-src="yunfeng" aria-pressed="true"/)
   rail.setFilter(null)
   assert.match(listRoot.innerHTML, /data-notice="b"/)
+  assert.deepEqual(read, ['yunfeng', null])
 })
 
 test('rail chips name every source and carry its unread count', () => {
@@ -76,6 +78,30 @@ test('rail chips name every source and carry its unread count', () => {
   assert.match(listRoot.innerHTML, /求是学院通知/)
   assert.match(listRoot.innerHTML, /本科生院通知/)
   assert.match(listRoot.innerHTML, /data-src="qsxy"[^>]*>[\s\S]*?<span class="badge">1<\/span>/)
+})
+
+test('viewing a source clears its unread marker, and viewing all clears the rest', () => {
+  const store = createStore(null)
+  store.upsertNotice('src-yunfeng', item('a', 'yunfeng', 5), { unread: true })
+  store.upsertNotice('src-itc', item('b', 'itc', 6), { unread: true })
+  const listRoot = pane()
+  const rail = createRail({
+    listRoot, detailRoot: pane(), store, client: { notice: async () => ({}) },
+    onRead(sourceId) {
+      for (const channel of store.state.channels.filter(c => c.kind === 'source' && c.sourceId !== 'xzzd')) {
+        if (!sourceId || channel.sourceId === sourceId) store.markRead(channel.id)
+      }
+    },
+  })
+  store.on('unread', () => rail.renderList())
+  rail.render()
+  assert.match(listRoot.innerHTML, /<span class="badge">2<\/span>/)
+  rail.setFilter('yunfeng')
+  assert.equal(store.state.unread['src-yunfeng'], undefined)
+  assert.equal(store.state.unread['src-itc'], 1)
+  rail.setFilter(null)
+  assert.equal(store.state.unread['src-itc'], undefined)
+  assert.doesNotMatch(listRoot.innerHTML, /<span class="badge">/)
 })
 
 test('headsUp is one line, quotes a shortened title and keeps the nickname placeholder', () => {
@@ -106,7 +132,8 @@ test('clicking the selected notice again closes its detail', () => {
     addEventListener(type, handler) { listeners[type] = handler },
   }
   const detailRoot = { ...pane(), classList: { remove() {}, add() {} } }
-  const rail = createRail({ listRoot, detailRoot, store, client: { notice: async () => ({}) } })
+  const read = []
+  const rail = createRail({ listRoot, detailRoot, store, client: { notice: async () => ({}) }, onRead: sourceId => read.push(sourceId) })
   const clickNotice = noticeId => listeners.click({
     target: { closest(selector) { return selector === '[data-notice]' ? { dataset: { notice: noticeId } } : null } },
   })
@@ -122,4 +149,95 @@ test('clicking the selected notice again closes its detail', () => {
   assert.equal(rail.selected, null)
   assert.equal(host.dataset.pane, 'list')
   assert.doesNotMatch(listRoot.innerHTML, /正在查看/)
+  assert.deepEqual(read, ['yunfeng', 'yunfeng'])
+})
+
+test('homework view shows the learning platform snapshot and switches back to campus notices', async () => {
+  const store = createStore(null)
+  store.upsertNotice('src-yunfeng', item('campus', 'yunfeng', 5))
+  const homework = {
+    id: 'xzzd:1', noticeId: 'xzzd:1', sourceId: 'xzzd', kind: 'homework', real: true,
+    revision: '1', title: '实验报告', url: 'https://example.edu.cn/homework/1',
+    publishedAt: Date.now(), homework: {
+      courseName: '计算机导论', courseCode: '(2026-2027-1)-A',
+      openAt: '2026-10-01T08:00:00+08:00', deadlineAt: '2026-10-30T20:00:00+08:00',
+      submissionStatus: 'not_submitted', isClosed: false,
+    },
+  }
+  store.syncHomeworkSnapshot([homework])
+  const host = { dataset: {} }
+  const listRoot = { ...pane(), parentElement: host }
+  const detailRoot = pane()
+  const rail = createRail({ listRoot, detailRoot, store, client: { notice: async () => ({ content: '完成报告并上传 PDF' }) } })
+  rail.render()
+  rail.setView('homework')
+  assert.match(listRoot.innerHTML, /学在浙大 · 作业/)
+  assert.match(listRoot.innerHTML, /实验报告/)
+  assert.match(listRoot.innerHTML, /计算机导论/)
+  assert.doesNotMatch(listRoot.innerHTML, /通知 campus/)
+  rail.openHomework('xzzd:1')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(host.dataset.pane, 'detail')
+  assert.match(detailRoot.innerHTML, /完成报告并上传 PDF/)
+  store.syncHomeworkSnapshot([])
+  rail.render()
+  assert.equal(rail.selected, null)
+  assert.equal(host.dataset.pane, 'list')
+  store.syncHomeworkSnapshot([homework])
+  rail.render()
+  rail.back()
+  assert.equal(host.dataset.pane, 'list')
+  rail.setView('notice')
+  assert.match(listRoot.innerHTML, /通知 campus/)
+  assert.doesNotMatch(listRoot.innerHTML, /实验报告/)
+})
+
+test('homework course dropdown filters assignments and survives view changes and snapshots', () => {
+  const store = createStore(null)
+  const now = Date.parse('2026-10-19T12:00:00+08:00')
+  const assignment = (id, courseId, courseName) => ({
+    id: `xzzd:${id}`, noticeId: `xzzd:${id}`, sourceId: 'xzzd', kind: 'homework', real: true,
+    revision: '1', title: `作业${id}`, publishedAt: now,
+    homework: { courseId, courseName, openAt: '2026-10-01T08:00:00+08:00', deadlineAt: '2026-10-30T20:00:00+08:00', submissionStatus: 'not_submitted', isClosed: false },
+  })
+  const math = assignment('math', 'm1', '高等数学')
+  const english = assignment('english', 'e1', '大学英语')
+  store.syncHomeworkSnapshot([math, english], { now })
+  const listeners = {}
+  const host = { dataset: {} }
+  const listRoot = { ...pane(), parentElement: host, addEventListener(type, handler) { listeners[type] = handler } }
+  const rail = createRail({ listRoot, detailRoot: pane(), store, client: { notice: async () => ({}) } })
+  rail.setView('homework')
+  assert.match(listRoot.innerHTML, /按课程筛选/)
+  assert.match(listRoot.innerHTML, /class="homework-option-name">全部课程</)
+  assert.match(listRoot.innerHTML, /class="homework-option-name">高等数学</)
+  assert.match(listRoot.innerHTML, /class="homework-option-name">大学英语</)
+  const click = (selector, dataset = {}) => listeners.click({ target: {
+    closest(candidate) { return candidate === selector ? { dataset } : null },
+  } })
+  click('[data-rail="homework-toggle"]')
+  assert.match(listRoot.innerHTML, /aria-expanded="true"/)
+  assert.doesNotMatch(listRoot.innerHTML, /role="listbox" aria-label="课程" hidden/)
+  listeners.keydown({ key: 'Escape', target: { closest: () => null }, preventDefault() {} })
+  assert.match(listRoot.innerHTML, /aria-expanded="false"/)
+  assert.match(listRoot.innerHTML, /role="listbox" aria-label="课程" hidden/)
+  click('[data-rail="homework-toggle"]')
+  rail.openHomework(math.noticeId)
+  click('[data-rail="homework-course"]', { course: 'id:e1' })
+  assert.equal(rail.homeworkCourse, 'id:e1')
+  assert.equal(rail.selected, null)
+  assert.equal(host.dataset.pane, 'list')
+  assert.match(listRoot.innerHTML, /作业english/)
+  assert.doesNotMatch(listRoot.innerHTML, /作业math/)
+  assert.match(listRoot.innerHTML, /data-course="id:e1" aria-selected="true"/)
+  assert.match(listRoot.innerHTML, /class="homework-filter-name">大学英语</)
+  rail.setView('notice')
+  rail.setView('homework')
+  assert.equal(rail.homeworkCourse, 'id:e1')
+  assert.doesNotMatch(listRoot.innerHTML, /作业math/)
+  store.syncHomeworkSnapshot([math], { now })
+  rail.render()
+  assert.equal(rail.homeworkCourse, null)
+  assert.match(listRoot.innerHTML, /作业math/)
+  assert.match(listRoot.innerHTML, /data-course="" aria-selected="true"/)
 })

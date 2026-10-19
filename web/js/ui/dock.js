@@ -11,7 +11,7 @@ export function createIconRail({ root, store, onView, onBot, onHomework, onMe, o
   let homeworkUnread = 0
   const badgeHTML = n => (n ? `<span class="badge">${n > 99 ? '99+' : n}</span>` : '')
 
-  const VIEWS = [['notice', '通知', 'bell'], ['calendar', '日历', 'calendar']]
+  const VIEWS = [['notice', '通知', 'bell'], ['homework', '作业', 'book'], ['calendar', '日历', 'calendar']]
 
   const btn = ({ id, label, iconName, html, current = false, badge = '' }) =>
     `<button class="rail-btn" data-view="${escapeHtml(id)}" aria-label="${escapeHtml(label)}"${current ? ' aria-current="page"' : ''}>
@@ -25,10 +25,10 @@ export function createIconRail({ root, store, onView, onBot, onHomework, onMe, o
 <img class="dock-brand" src="./assets/icon.png" width="32" height="32" alt="" draggable="false">
 ${btn({ id: 'chat', label: `和${p.botName}说话`, current: view === 'chat', badge: badgeHTML(chatUnread), html: markHTML({ look: p.look, image: p.look === 'image' ? p.image : null, label: p.botName, size: 40, live: true, gaze: true, poke: true }) })}
 <div class="dock-views" role="group" aria-label="视图">
-  ${VIEWS.map(([id, label, name]) => btn({
-      id, label, iconName: name, current: view === id, badge: id === 'notice' ? badgeHTML(unread) : '',
+  ${VIEWS.filter(([id]) => id !== 'homework' || store.channel('src-xzzd')).map(([id, label, name]) => btn({
+      id, label, iconName: name, current: view === id,
+      badge: id === 'notice' ? badgeHTML(unread) : id === 'homework' ? badgeHTML(homeworkUnread) : '',
     })).join('')}
-  ${store.channel('src-xzzd') ? btn({ id: 'homework', label: '作业', iconName: 'book', current: view === 'homework', badge: badgeHTML(homeworkUnread) }) : ''}
 </div>
 <div class="dock-spacer"></div>
 ${btn({ id: 'search', label: '搜索消息', iconName: 'search' })}

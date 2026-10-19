@@ -6,6 +6,7 @@ import { hasLook } from './mark/looks.js'
 import { LOCAL_CHANNELS, headsUp } from './services/sources.js'
 import { DECISION_FIELDS } from './services/notice-summary.js'
 import { cleanHomework, isHomework, isHomeworkCard, defaultHomeworkMessages, homeworkCopy } from './services/homework.js'
+import { validCalendarDate, validCalendarTime } from './services/calendar.js'
 
 export const STORAGE_KEY = 'pigeonpal.v1'
 // 'notice' is accepted only so legacy stored messages can be migrated into `notices`.
@@ -30,6 +31,9 @@ export function createInitialState() {
     channels: [{ id: 'bot', kind: 'bot' }, ...LOCAL_CHANNELS.map(c => ({ kind: 'source', notify: 'all', ...c }))],
     messages: Object.fromEntries(['bot', ...LOCAL_CHANNELS.map(c => c.id)].map(id => [id, []])),
     notices: {},
+    homeworkItems: {},
+    calendarItems: {},
+    calendarCompleted: {},
     reminders: [],
     unread: {},
     seenItems: [],
@@ -54,7 +58,7 @@ export function hydrate(raw) {
   if (['lively', 'calm', 'off'].includes(p.motion)) fresh.profile.motion = p.motion
   if (typeof p.proactive === 'boolean') fresh.profile.proactive = p.proactive
   for (const key of ['quietStart', 'quietEnd']) if (/^([01]\d|2[0-3]):[0-5]\d$/.test(p[key] ?? '')) fresh.profile[key] = p[key]
-  if (Number.isSafeInteger(p.chatW) && p.chatW >= 280 && p.chatW <= 720) fresh.profile.chatW = p.chatW
+  if (Number.isSafeInteger(p.chatW) && p.chatW >= 280 && p.chatW <= 1200) fresh.profile.chatW = p.chatW
 
   // The notice rail's own collection: crawled rows, keyed by noticeId.
   if (stored.notices && typeof stored.notices === 'object' && !Array.isArray(stored.notices)) {
@@ -109,13 +113,43 @@ export function hydrate(raw) {
     const unread = stored.unread?.[channel.id]
     if (Number.isSafeInteger(unread) && unread > 0) fresh.unread[channel.id] = channel.id === 'src-xzzd' ? Math.min(unread, fresh.messages[channel.id].length) : unread
   }
+  if (stored.homeworkItems && typeof stored.homeworkItems === 'object' && !Array.isArray(stored.homeworkItems)) {
+    for (const value of Object.values(stored.homeworkItems).slice(0, 1000)) {
+      if (!value || !isHomework(value) || typeof value.id !== 'string' || typeof value.title !== 'string') continue
+      const item = cleanItem(value)
+      if (item.noticeId) fresh.homeworkItems[item.noticeId] = item
+    }
+  } else {
+    for (const message of fresh.messages['src-xzzd'].filter(isHomeworkCard)) fresh.homeworkItems[message.item.noticeId] = message.item
+  }
+  if (stored.calendarItems && typeof stored.calendarItems === 'object' && !Array.isArray(stored.calendarItems)) {
+    for (const value of Object.values(stored.calendarItems).slice(0, 1000)) {
+      const item = cleanCalendarItem(value)
+      if (item) fresh.calendarItems[item.id] = item
+    }
+  }
+  if (stored.calendarCompleted && typeof stored.calendarCompleted === 'object' && !Array.isArray(stored.calendarCompleted)) {
+    for (const [id, completed] of Object.entries(stored.calendarCompleted).slice(0, 2000)) {
+      if (/^(homework:|notice:|reminder:)/.test(id) && id.length <= 260 && typeof completed === 'boolean') fresh.calendarCompleted[id] = completed
+    }
+  }
   if (Array.isArray(stored.reminders)) {
     fresh.reminders = stored.reminders.filter(r => r && typeof r.id === 'string' && typeof r.title === 'string' && Number.isFinite(r.dueAt) && ['pending', 'done', 'cancelled'].includes(r.status))
-      .map(r => ({ id: r.id, title: r.title.slice(0, 80), dueAt: r.dueAt, status: r.status, channelId: fresh.messages[r.channelId] ? r.channelId : 'bot', noticeId: typeof r.noticeId === 'string' ? r.noticeId : null, deliveredAt: Number.isFinite(r.deliveredAt) ? r.deliveredAt : null, createdAt: Number.isFinite(r.createdAt) ? r.createdAt : 0, updatedAt: Number.isFinite(r.updatedAt) ? r.updatedAt : 0 }))
+      .map(r => ({ id: r.id, title: r.title.slice(0, 80), dueAt: r.dueAt, status: r.status, channelId: fresh.messages[r.channelId] ? r.channelId : 'bot', noticeId: typeof r.noticeId === 'string' ? r.noticeId : null, deliveredAt: Number.isFinite(r.deliveredAt) ? r.deliveredAt : null, createdAt: Number.isFinite(r.createdAt) ? r.createdAt : 0, updatedAt: Number.isFinite(r.updatedAt) ? r.updatedAt : 0,
+        ...(typeof r.automatic === 'boolean' ? { automatic: r.automatic } : {}) }))
   }
   if (Array.isArray(stored.seenItems)) fresh.seenItems = stored.seenItems.filter(id => typeof id === 'string').slice(-2000)
   if (Number.isSafeInteger(stored.eventCursor) && stored.eventCursor >= 0) fresh.eventCursor = stored.eventCursor
   return fresh
+}
+
+function cleanCalendarItem(value) {
+  if (!value || typeof value !== 'object' || typeof value.id !== 'string' || !/^cal-[\w-]{1,150}$/.test(value.id)
+      || typeof value.title !== 'string' || !value.title.trim() || !validCalendarDate(value.date)) return null
+  if (value.time && !validCalendarTime(value.time)) return null
+  return { id: value.id, title: value.title.trim().slice(0, 80), date: value.date,
+    time: value.time || '', completed: value.completed === true,
+    ...(typeof value.noticeId === 'string' && value.noticeId.length <= 200 ? { noticeId: value.noticeId } : {}) }
 }
 
 function cleanItem(item) {
@@ -211,14 +245,17 @@ export function createStore(storage = globalThis.localStorage) {
     },
     syncHomeworkSnapshot(items, { now = Date.now(), unread = false } = {}) {
       const channelId = 'src-xzzd', previous = state.messages[channelId] || []
+      const homeworkItems = Object.fromEntries(items.filter(isHomework).slice(0, 1000).map(item => [item.noticeId, cleanItem(item)]).filter(([id]) => id))
+      const calendarChanged = JSON.stringify(homeworkItems) !== JSON.stringify(state.homeworkItems)
       const cards = previous.filter(isHomeworkCard)
       const byNotice = new Map(cards.map(message => [message.item.noticeId, message]))
       const incoming = items.map(item => ({ id: byNotice.get(item.noticeId)?.id || item.id || newId('msg'),
         role: 'bot', kind: 'notice', channelId, at: item.publishedAt || now, text: homeworkCopy(item), item: cleanItem(item) }))
       const selected = defaultHomeworkMessages(incoming, now)
       const next = [...selected, ...previous.filter(message => !isHomeworkCard(message))]
-      if (JSON.stringify(next) === JSON.stringify(previous)) return { changed: false, added: [] }
+      if (JSON.stringify(next) === JSON.stringify(previous) && !calendarChanged) return { changed: false, added: [] }
       const added = selected.filter(message => !byNotice.has(message.item.noticeId))
+      state.homeworkItems = homeworkItems
       state.messages[channelId] = next
       state.unread[channelId] = unread ? Math.min(8, (state.unread[channelId] || 0) + added.length) : 0
       save()
@@ -232,7 +269,7 @@ export function createStore(storage = globalThis.localStorage) {
         const existing = state.reminders.find(reminder => reminder.id === row.id)
         if (existing && (existing.updatedAt || 0) > (row.updatedAt || 0)) continue
         // The runtime polls every couple of seconds; only a real change may re-render listeners.
-        const changed = !existing || ['title', 'dueAt', 'status', 'channelId', 'noticeId', 'deliveredAt', 'updatedAt']
+        const changed = !existing || ['title', 'dueAt', 'status', 'channelId', 'noticeId', 'deliveredAt', 'updatedAt', 'automatic']
           .some(key => existing[key] !== row[key])
         if (existing) Object.assign(existing, row)
         else state.reminders.push({ ...row })
@@ -241,6 +278,23 @@ export function createStore(storage = globalThis.localStorage) {
       save()
     },
     setEventCursor(cursor) { state.eventCursor = cursor; save() },
+    upsertCalendarItem(fields) {
+      const item = cleanCalendarItem(fields)
+      if (!item) throw new Error('日历事项需要标题和有效日期')
+      if (state.calendarItems[item.id]) item.completed = state.calendarItems[item.id].completed
+      state.calendarItems[item.id] = item
+      save()
+      emit('calendar', item)
+      return item
+    },
+    setCalendarCompleted(id, completed) {
+      if (typeof completed !== 'boolean') return
+      if (state.calendarItems[id]) state.calendarItems[id].completed = completed
+      else if (/^(homework:|notice:|reminder:)/.test(id) && id.length <= 260) state.calendarCompleted[id] = completed
+      else return
+      save()
+      emit('calendar', { id, completed })
+    },
     markRead(channelId) {
       if (!state.unread[channelId]) return
       delete state.unread[channelId]

@@ -12,7 +12,9 @@ import { createHeader } from './ui/header.js'
 import { createTranscript } from './ui/transcript.js'
 import { createComposer } from './ui/composer.js'
 import { createRail } from './ui/rail.js'
-import { createSplitter } from './ui/splitter.js'
+import { createCalendar, calendarDetailHTML } from './ui/calendar.js'
+import { shanghaiDate, validCalendarDate, validCalendarTime } from './services/calendar.js'
+import { createSplitter, watchNoticeWidth, NOTICE_MIN, CALENDAR_MIN } from './ui/splitter.js'
 import { lookHue, imageHue } from './ui/palette.js'
 import { openSettings } from './ui/settings.js'
 import { createAuthClient } from './services/auth.js'
@@ -91,17 +93,24 @@ function applyPrefs() {
 
 const noticeView = $('notice')
 
-function setView(view) {
+function setView(view, { acknowledge = true } = {}) {
+  app.style.setProperty('--min-notice', `${view === 'calendar' ? CALENDAR_MIN : NOTICE_MIN}px`)
   noticeView.dataset.view = view
+  noticeView.setAttribute('aria-label', view === 'homework' ? '学在浙大作业' : view === 'calendar' ? '日历' : '通知')
   $('pane-calendar').hidden = view !== 'calendar'
+  if (view === 'calendar') calendar.render()
+  rail.setView(view)
   dock.setView(view)
+  if (narrowChat()) toggleChat(false)
+  if (view === 'notice' && acknowledge) markNoticeRead()
+  if (view === 'homework' && acknowledge) store.markRead('src-xzzd')
 }
 
 const dock = createIconRail({
   root: $('dock-nav'), store,
   onView: setView,
   onBot: () => { select('bot'); dock.setView('chat'); if (narrowChat()) toggleChat(true); else composer.focus() },
-  onHomework: () => { select('src-xzzd'); dock.setView('homework'); if (narrowChat()) toggleChat(true) },
+  onHomework: () => { select('src-xzzd'); setView('homework') },
   onMe: openMeMenu,
   onAddSource: openAddSource,
   onSearch: openSearch,
@@ -113,15 +122,25 @@ const rail = createRail({
   listRoot: $('pane-list'), detailRoot: $('pane-detail'), store, client: apiClient,
   onRemind: (item, anchor) => openNoticeReminder(item, anchor),
   onAttach: n => composer.attachNotice(n.noticeId),
+  onRead: markNoticeRead,
 })
+const calendar = createCalendar({ root: $('pane-calendar'), store, onAdd: openNewCalendarItem, onOpen: openCalendarItem })
 
 const narrowChat = () => window.matchMedia('(max-width: 1099px)').matches
-const noticeUnread = () => store.state.channels.filter(c => c.kind === 'source' && c.sourceId !== 'xzzd').reduce((sum, c) => sum + (store.state.unread[c.id] ?? 0), 0)
+const noticeChannels = () => store.state.channels.filter(c => c.kind === 'source' && c.sourceId !== 'xzzd')
+const noticeUnread = () => noticeChannels().reduce((sum, c) => sum + (store.state.unread[c.id] ?? 0), 0)
+
+function markNoticeRead(sourceId = null) {
+  for (const channel of noticeChannels()) {
+    if (!sourceId || channel.sourceId === sourceId) store.markRead(channel.id)
+  }
+}
 
 createSplitter({
   handle: $('split'),
-  get: () => store.state.profile.chatW,
+  get: () => $('chat').getBoundingClientRect().width,
   set: px => store.setProfile({ chatW: px }),
+  getNoticeMin: () => noticeView.dataset.view === 'calendar' ? CALENDAR_MIN : NOTICE_MIN,
 })
 
 function toggleChat(open = app.dataset.chat !== 'open') {
@@ -159,10 +178,11 @@ store.on('message', m => {
   transcript.append(m)
   if (m.channelId === active && document.visibilityState === 'visible') store.markRead(m.channelId)
 })
-store.on('homework-snapshot', ({ channelId }) => { transcript.syncHomeworkSnapshot(channelId); syncBadges() })
+store.on('homework-snapshot', ({ channelId }) => { transcript.syncHomeworkSnapshot(channelId); rail.render(); calendar.render(); syncBadges() })
 store.on('unread', () => { rail.renderList(); syncBadges() })
 store.on('message-updated', message => { transcript.refreshNotice(message); syncBadges() })
-store.on('notice', e => { rail.onNotice(e); syncBadges() })
+store.on('notice', e => { rail.onNotice(e); calendar.render(); syncBadges() })
+store.on('calendar', () => calendar.render())
 store.on('channels', () => rail.renderList())
 store.on('profile', patch => {
   applyPrefs()
@@ -174,6 +194,7 @@ store.on('profile', patch => {
 })
 store.on('reminders', r => {
   if (!r) return
+  calendar.render()
   for (const m of store.state.messages[active] ?? []) if (m.reminderId === r.id || m.id === r.noticeId || m.noticeId === r.noticeId || m.item?.noticeId === r.noticeId) transcript.patch(m.id)
   rail.patchRemindPill(r)
 })
@@ -253,6 +274,10 @@ async function run(ch, stream) {
 function applyAction(ch, { name, args }) {
   if (name === 'profile.update') store.setProfile({ nickname: args.nickname })
   if (name === 'reminder.upsert') store.syncReminders([args])
+  if (name === 'calendar.upsert') {
+    const item = store.upsertCalendarItem(args)
+    if (noticeView.dataset.view === 'calendar') calendar.setMonth(item.date)
+  }
 }
 
 // ------------------------------------------------------------ transcript
@@ -329,10 +354,17 @@ function openNoticeReminder(item, anchor) {
   if (overlayFor(anchor)) return closeOverlay()
   const channelId = store.state.channels.find(c => c.sourceId === item.sourceId)?.id ?? 'bot'
   const existing = store.state.reminders.find(r => r.noticeId === item.noticeId && r.status === 'pending')
-  const reference = item.eventAt || (typeof item.deadlineAt === 'string' && item.deadlineAt.includes('T') ? Date.parse(item.deadlineAt) : null)
-  const before = item.eventAt ? '开始前' : '截止前'
-  const options = [[15, `${before} 15 分钟`], [30, `${before} 30 分钟`], [60, `${before} 1 小时`], [24 * 60, '提前一天']]
-    .map(([min, label]) => [reference - min * 60_000, label]).filter(([at]) => at > Date.now())
+  const deadline = typeof item.deadlineAt === 'string' && item.deadlineAt.includes('T')
+    ? Date.parse(item.deadlineAt)
+    : validCalendarDate(item.deadlineAt) ? Date.parse(`${item.deadlineAt}T23:59:00+08:00`) : null
+  const references = [
+    [Number.isFinite(item.eventAt) ? item.eventAt : null, '开始前'],
+    [Number.isFinite(deadline) ? deadline : null, '截止前'],
+  ].filter(([at]) => at !== null)
+  const options = references.flatMap(([reference, before]) => [[15, `${before} 15 分钟`], [30, `${before} 30 分钟`],
+    [60, `${before} 1 小时`], [24 * 60, `${before}一天`]].map(([min, label]) => [reference - min * 60_000, label]))
+    .filter(([at]) => at > Date.now())
+    .filter(([at], index, all) => all.findIndex(([other]) => other === at) === index)
   const pop = popover(anchor, `<div class="pop-title">什么时候叫你？</div>
 ${options.map(([at, label]) => `<button class="mi" data-at="${at}">${icon('bell', 16)}${label}<span class="hint">${escapeHtml(whenLabel(at))}</span></button>`).join('')}
 <button class="mi" data-at="custom">${icon('clock', 16)}自定义提醒时间</button>
@@ -476,6 +508,35 @@ function openNewReminder(opener, { title = '', channelId = 'bot', noticeId } = {
   })
 }
 
+function openNewCalendarItem(date = shanghaiDate(Date.now()), opener) {
+  const box = dialog(`<h3>添加日历事项</h3><p>放进日历后，可以直接勾选完成。</p>
+<div class="field"><label for="calendar-new-title">事项</label><input class="input" id="calendar-new-title" data-f="title" placeholder="要做什么？" maxlength="80"></div>
+<div class="field"><label for="calendar-new-date">日期</label><input class="input" id="calendar-new-date" type="date" data-f="date" value="${escapeHtml(date)}"></div>
+<div class="field"><label for="calendar-new-time">时间（可选）</label><input class="input" id="calendar-new-time" type="time" data-f="time"></div>
+<div class="btns"><button class="btn" data-x="cancel">取消</button><button class="btn primary" data-x="ok">添加</button></div>`, { opener })
+  box.addEventListener('click', e => {
+    const button = e.target.closest?.('[data-x]')
+    if (!button) return
+    if (button.dataset.x === 'cancel') return closeOverlay()
+    if (button.dataset.x !== 'ok') return
+    const title = box.querySelector('[data-f="title"]').value.trim()
+    const day = box.querySelector('[data-f="date"]').value
+    const time = box.querySelector('[data-f="time"]').value
+    if (!title) return toast('先写下要做的事')
+    if (!validCalendarDate(day) || time && !validCalendarTime(time)) return toast('请检查日期和时间')
+    store.upsertCalendarItem({ id: newId('cal'), title, date: day, time, completed: false })
+    closeOverlay()
+    calendar.setMonth(day)
+    toast('已加入日历')
+  })
+}
+
+function openCalendarItem(item, opener) {
+  const box = dialog(calendarDetailHTML(item, store.state), { opener })
+  box.classList.add('calendar-dialog')
+  box.querySelector('[data-x="close"]').addEventListener('click', closeOverlay)
+}
+
 function openAddSource(opener) {
   const box = dialog(`<h3>添加信息来源</h3><p>告诉${escapeHtml(store.state.profile.botName)}想关注哪个网站。抓取还在接入中，先建好频道，接通后消息会自动出现。</p>
 <div class="field"><input class="input" data-f="title" placeholder="频道名，比如：计算机学院" maxlength="16"></div>
@@ -572,9 +633,11 @@ async function refreshRuntime() {
 // ------------------------------------------------------------------- boot
 connectDesktop(store, select)
 applyPrefs()
+watchNoticeWidth(noticeView)
 dock.render()
 rail.render()
-setView('notice')
+calendar.render()
+setView('notice', { acknowledge: false })
 select('bot')
 syncBadges()
 startGaze(document)

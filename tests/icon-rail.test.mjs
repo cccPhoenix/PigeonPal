@@ -42,6 +42,8 @@ test('switching views moves the current marker, and the badge updates without a 
 test('the homework source keeps a reachable dock entry after the UI merge', () => {
   const { root, dock, seen, listeners } = build(createStore(null))
   assert.match(root.innerHTML, /data-view="homework"[^>]*aria-label="作业"/)
+  assert.ok(root.innerHTML.indexOf('data-view="notice"') < root.innerHTML.indexOf('data-view="homework"'))
+  assert.ok(root.innerHTML.indexOf('data-view="homework"') < root.innerHTML.indexOf('data-view="calendar"'))
   dock.setHomeworkUnread(2)
   assert.match(root.innerHTML, /data-view="homework"[^>]*>[\s\S]*?<span class="badge">2<\/span>/)
   listeners.click({ target: { closest: () => ({ dataset: { view: 'homework' } }) } })

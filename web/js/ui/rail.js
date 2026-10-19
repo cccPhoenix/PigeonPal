@@ -3,6 +3,7 @@ import { escapeHtml, shortTime, dayLabel, whenLabel } from './format.js'
 import { NOTICE_CATEGORIES, NOTICE_DRAG_TYPE, isAttachable } from '../services/sources.js'
 import { apiErrorText } from '../services/api.js'
 import { toast } from './overlays.js'
+import { cleanHomework, homeworkDetailHTML, homeworkTime, isHomeworkCard } from '../services/homework.js'
 
 // The notice view: crawled notices, typeset rather than chatted. The list pane groups by
 // day and filters by source; the detail pane is a key/value table fed by the list plus the
@@ -20,10 +21,15 @@ const sourceIcon = sourceId => icon(SOURCE_ICONS[sourceId] ?? 'bell', 17)
 // Detail-endpoint URLs are not run through store.cleanItem, so pin the scheme here.
 const safeHref = url => (/^https?:\/\//.test(url ?? '') ? escapeHtml(url) : '')
 
-export function createRail({ listRoot, detailRoot, store, client, onRemind, onAttach }) {
+export function createRail({ listRoot, detailRoot, store, client, onRemind, onAttach, onRead }) {
+  let view = 'notice'
   let filter = null
   let selected = null
+  let selectedHomework = null
+  let homeworkCourse = null
+  let homeworkMenuOpen = false
   const detailCache = new Map()
+  const homeworkCache = new Map()
 
   const channelOf = n => store.state.channels.find(c => c.sourceId === n.sourceId)
   const row = (label, value) => (value ? `<tr><th scope="row">${escapeHtml(label)}</th><td>${value}</td></tr>` : '')
@@ -60,7 +66,74 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
 </button>`
   }
 
+  const homeworkCards = () => (store.state.messages['src-xzzd'] || []).filter(isHomeworkCard)
+  const homeworkItem = id => homeworkCards().find(message => message.item.noticeId === id)?.item
+  const courseKey = item => {
+    const hw = cleanHomework(item.homework)
+    return hw.courseId ? `id:${hw.courseId}` : hw.courseCode ? `code:${hw.courseCode}` : hw.courseName ? `name:${hw.courseName}` : 'unknown'
+  }
+
+  function homeworkItemHTML(n) {
+    const hw = cleanHomework(n.homework)
+    const current = selectedHomework === n.noticeId
+    const status = hw.submissionStatus === 'submitted' ? '已提交' : hw.isClosed ? '已结束' : hw.submissionStatus === 'unknown' ? '状态未知' : '待完成'
+    const deadline = homeworkTime(hw.deadlineAt).replace('（北京时间）', '').replace('（原站仅提供日期）', '')
+    return `<button class="rail-item" data-homework="${escapeHtml(n.noticeId)}" aria-current="${current}">
+  <span class="rail-ico" aria-hidden="true">${icon('book', 17)}</span>
+  <span class="rail-text">
+    <span class="rail-title">${escapeHtml(n.title)}</span>
+    <span class="rail-sub">${escapeHtml(hw.courseName || '学在浙大')} · 截止 ${escapeHtml(deadline)}</span>
+  </span>
+  ${current ? '<span class="rail-current">正在查看</span>' : `<span class="homework-status">${status}</span>`}
+</button>`
+  }
+
+  function renderHomeworkList() {
+    const cards = homeworkCards()
+    const courses = new Map()
+    for (const message of cards) {
+      const hw = cleanHomework(message.item.homework)
+      const key = courseKey(message.item)
+      if (!courses.has(key)) courses.set(key, { name: hw.courseName || hw.courseCode || '未注明课程', count: 0 })
+      courses.get(key).count += 1
+    }
+    if (homeworkCourse && !courses.has(homeworkCourse)) homeworkCourse = null
+    const shown = homeworkCourse ? cards.filter(message => courseKey(message.item) === homeworkCourse) : cards
+    if (selectedHomework && homeworkCourse && courseKey(homeworkItem(selectedHomework) || { homework: {} }) !== homeworkCourse) selectedHomework = null
+    const options = [['', { name: '全部课程', count: cards.length }],
+      ...[...courses].sort((a, b) => a[1].name.localeCompare(b[1].name, 'zh-CN'))]
+      .map(([key, course]) => `<button class="homework-option" type="button" role="option" data-rail="homework-course" data-course="${escapeHtml(key)}" aria-selected="${(homeworkCourse || '') === key}"><span class="homework-option-name">${escapeHtml(course.name)}</span><span class="homework-option-count">${course.count}</span>${(homeworkCourse || '') === key ? icon('check', 15) : ''}</button>`).join('')
+    const currentCourse = homeworkCourse ? courses.get(homeworkCourse) : null
+    repaint(listRoot, `<div class="rail-top"><span class="rail-head">学在浙大 · 作业</span><span class="homework-count">${shown.length} 项</span></div>
+<div class="homework-filter"><span class="homework-filter-label">课程</span><div class="homework-select-wrap" data-rail="homework-selector"><button class="homework-filter-button" type="button" data-rail="homework-toggle" aria-label="按课程筛选" aria-haspopup="listbox" aria-controls="homework-course-menu" aria-expanded="${homeworkMenuOpen}"><span class="homework-filter-name">${escapeHtml(currentCourse?.name || '全部课程')}</span><span class="homework-filter-count">${shown.length}</span>${icon('chevron', 14)}</button><div class="homework-menu" id="homework-course-menu" role="listbox" aria-label="课程"${homeworkMenuOpen ? '' : ' hidden'}>${options}</div></div></div>
+<div class="rail-list pane-scroll">${shown.length ? `<div class="divider">当前作业</div>${shown.map(message => homeworkItemHTML(message.item)).join('')}` : `<div class="empty">${homeworkCourse ? '这门课程目前没有作业' : '还没有当前作业，正在等待学在浙大同步'}</div>`}</div>`)
+  }
+
+  function renderHomeworkDetail() {
+    const n = selectedHomework ? homeworkItem(selectedHomework) : null
+    if (!n) {
+      selectedHomework = null
+      repaint(detailRoot, `<div class="rail-top"><span class="rail-head">作业详情</span></div>
+<div class="pane-scroll"><div class="empty">左边选一项作业看看</div></div>`)
+      return
+    }
+    const cached = homeworkCache.get(cacheKey(n))
+    const content = cached instanceof Error
+      ? `<div class="note">${escapeHtml(apiErrorText(cached))} <button class="btn" data-act="retry-homework">重试</button></div>${homeworkDetailHTML(n, {}, { embedded: true })}`
+      : homeworkDetailHTML(n, cached || { state: 'pending' }, { embedded: true })
+    repaint(detailRoot, `<div class="rail-top">
+  <button class="icon-btn flat detail-back" data-rail="back" aria-label="返回作业列表">${icon('chevron', 16)}</button>
+  <span class="rail-head">作业详情</span>
+  <button class="icon-btn flat detail-close" data-rail="back" aria-label="关闭详情">${icon('close', 18)}</button>
+</div>
+<div class="rail-detail pane-scroll homework-detail">
+  <div class="detail-intro"><span class="detail-source">${icon('book', 16)}${escapeHtml(cleanHomework(n.homework).courseName || '学在浙大')}</span><h2>${escapeHtml(n.title)}</h2></div>
+  <div class="panel">${content}</div>
+</div>`)
+  }
+
   function renderList() {
+    if (view === 'homework') return renderHomeworkList()
     const all = Object.values(store.state.notices)
       .filter(n => !filter || n.sourceId === filter)
       .sort((a, b) => (b.publishedAt ?? 0) - (a.publishedAt ?? 0))
@@ -112,6 +185,7 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
   }
 
   function renderDetail() {
+    if (view === 'homework') return renderHomeworkDetail()
     const n = selected ? store.notice(selected) : null
     if (!n) {
       repaint(detailRoot, `<div class="rail-top"><span class="rail-head">详情</span></div>
@@ -151,13 +225,21 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
 
   function syncPaneAttr() {
     const host = listRoot.parentElement
-    if (host?.dataset) host.dataset.pane = selected ? 'detail' : 'list'
+    if (host?.dataset) host.dataset.pane = (view === 'homework' ? selectedHomework : selected) ? 'detail' : 'list'
+  }
+
+  function setView(next) {
+    if (next === view) return
+    homeworkMenuOpen = false
+    view = next
+    render()
   }
 
   function setFilter(sourceId) {
     filter = sourceId || null
     renderList()
     syncPaneAttr()
+    onRead?.(filter)
   }
 
   function openNotice(noticeId) {
@@ -166,6 +248,7 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
     const switching = Boolean(selected && selected !== noticeId)
     selected = noticeId
     renderList()
+    onRead?.(n.sourceId)
     if (n.real && !detailCache.has(cacheKey(n))) {
       renderDetail()
       client.notice(n.noticeId)
@@ -183,8 +266,30 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
     }
   }
 
+  function openHomework(noticeId) {
+    const n = homeworkItem(noticeId)
+    if (!n) { selectedHomework = null; return render() }
+    const switching = Boolean(selectedHomework && selectedHomework !== noticeId)
+    selectedHomework = noticeId
+    renderList()
+    renderDetail()
+    syncPaneAttr()
+    if (switching && detailRoot.classList) {
+      detailRoot.classList.remove('detail-switching')
+      void detailRoot.offsetWidth
+      detailRoot.classList.add('detail-switching')
+    }
+    if (n.real && !homeworkCache.has(cacheKey(n))) {
+      client.notice(n.noticeId)
+        .then(detail => homeworkCache.set(cacheKey(n), detail))
+        .catch(error => homeworkCache.set(cacheKey(n), error))
+        .then(() => { if (view === 'homework' && selectedHomework === noticeId) renderDetail() })
+    }
+  }
+
   function back() {
-    selected = null
+    if (view === 'homework') selectedHomework = null
+    else selected = null
     detailRoot.classList?.remove('detail-switching')
     renderList()
     renderDetail()
@@ -200,6 +305,7 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
   }
 
   function onNotice({ item, revised }) {
+    if (view !== 'notice') return
     renderList()
     if (revised && selected === item.noticeId) {
       detailCache.delete(cacheKey(item))
@@ -208,7 +314,7 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
   }
 
   function patchRemindPill(reminder) {
-    if (!selected || (reminder && reminder.noticeId !== selected)) return
+    if (view !== 'notice' || !selected || (reminder && reminder.noticeId !== selected)) return
     const pill = detailRoot.querySelector?.('.rail-detail [data-act="remind"]')
     if (!pill) return
     const pending = store.state.reminders.find(r => r.noticeId === selected && r.status === 'pending')
@@ -218,6 +324,26 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
 
   function bind(root) {
     root.addEventListener('click', e => {
+      if (view === 'homework') {
+        const toggle = e.target.closest?.('[data-rail="homework-toggle"]')
+        if (toggle) {
+          homeworkMenuOpen = !homeworkMenuOpen
+          renderHomeworkList()
+          if (homeworkMenuOpen) listRoot.querySelector?.('[data-rail="homework-course"][aria-selected="true"]')?.focus()
+          else listRoot.querySelector?.('[data-rail="homework-toggle"]')?.focus()
+          return
+        }
+        const course = e.target.closest?.('[data-rail="homework-course"]')
+        if (course) {
+          homeworkCourse = course.dataset.course || null
+          homeworkMenuOpen = false
+          render()
+          listRoot.querySelector?.('[data-rail="homework-toggle"]')?.focus()
+          return
+        }
+      }
+      const homework = e.target.closest?.('[data-homework]')
+      if (homework && view === 'homework') return selectedHomework === homework.dataset.homework ? back() : openHomework(homework.dataset.homework)
       const picked = e.target.closest?.('[data-notice]')
       if (picked) return selected === picked.dataset.notice ? back() : openNotice(picked.dataset.notice)
       const chip = e.target.closest?.('[data-rail="filter"]')
@@ -225,6 +351,11 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
       if (e.target.closest?.('[data-rail="back"]')) return back()
       const act = e.target.closest?.('[data-act]')
       if (!act) return
+      if (act.dataset.act === 'retry-homework' && view === 'homework') {
+        const n = homeworkItem(selectedHomework)
+        if (n) { homeworkCache.delete(cacheKey(n)); openHomework(n.noticeId) }
+        return
+      }
       const n = selected ? store.notice(selected) : null
       if (act.dataset.act === 'remind' && n) return onRemind?.(n, act)
       if (act.dataset.act === 'attach' && n) return onAttach?.(n)
@@ -238,6 +369,37 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
   bind(listRoot)
   bind(detailRoot)
 
+  listRoot.addEventListener('keydown', e => {
+    if (view !== 'homework') return
+    const toggle = e.target.closest?.('[data-rail="homework-toggle"]')
+    const option = e.target.closest?.('[data-rail="homework-course"]')
+    if (e.key === 'Escape' && homeworkMenuOpen) {
+      e.preventDefault()
+      homeworkMenuOpen = false
+      renderHomeworkList()
+      listRoot.querySelector?.('[data-rail="homework-toggle"]')?.focus()
+    } else if (toggle && ['ArrowDown', 'ArrowUp'].includes(e.key)) {
+      e.preventDefault()
+      homeworkMenuOpen = true
+      renderHomeworkList()
+      listRoot.querySelector?.('[data-rail="homework-course"][aria-selected="true"]')?.focus()
+    } else if (option && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+      e.preventDefault()
+      const options = [...(listRoot.querySelectorAll?.('[data-rail="homework-course"]') || [])]
+      const index = options.indexOf(option)
+      const next = e.key === 'Home' ? 0 : e.key === 'End' ? options.length - 1
+        : (index + (e.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length
+      options[next]?.focus()
+    }
+  })
+
+  document.addEventListener('click', e => {
+    if (view === 'homework' && homeworkMenuOpen && !e.target.closest?.('[data-rail="homework-selector"]')) {
+      homeworkMenuOpen = false
+      renderHomeworkList()
+    }
+  })
+
   // Dragging a row onto the composer attaches it as the question's context.
   listRoot.addEventListener('dragstart', e => {
     const row = e.target.closest?.('[data-notice]')
@@ -250,8 +412,9 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
   })
 
   return {
-    render, renderList, renderDetail, setFilter, openNotice, back, reveal, onNotice, patchRemindPill,
+    render, renderList, renderDetail, setView, setFilter, openNotice, openHomework, back, reveal, onNotice, patchRemindPill,
     get filter() { return filter },
-    get selected() { return selected },
+    get homeworkCourse() { return homeworkCourse },
+    get selected() { return view === 'homework' ? selectedHomework : selected },
   }
 }

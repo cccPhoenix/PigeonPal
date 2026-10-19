@@ -53,7 +53,7 @@ const safeLink = value => {
   } catch { return null }
 }
 
-export function homeworkDetailHTML(item, detail = {}) {
+export function homeworkDetailHTML(item, detail = {}, { embedded = false } = {}) {
   const current = { ...item, title: detail.title || item.title, homework: detail.homework || item.homework }
   const metadata = cleanHomework(current.homework)
   const url = safeLink(detail.url || item.url)
@@ -69,11 +69,11 @@ export function homeworkDetailHTML(item, detail = {}) {
         : '作业详情读取失败，请稍后重试，也可先打开官方作业入口查看。'
       : '原站未提供文字要求，请查看附件或打开官方作业入口。'
   const body = typeof detail.content === 'string' && detail.content.trim() ? detail.content : emptyBody
-  return `<h3>作业详情</h3><div class="note">${escapeHtml(homeworkCopy(current)).replace(/\n/g, '<br>')}</div>
+  return `${embedded ? '' : '<h3>作业详情</h3>'}<div class="note">${escapeHtml(homeworkCopy(current)).replace(/\n/g, '<br>')}</div>
 ${metadata.openAt ? `<p>开放：${escapeHtml(homeworkTime(metadata.openAt))}</p>` : ''}
 <details class="notice-body" open><summary>作业要求</summary><div>${escapeHtml(body).replace(/\n/g, '<br>')}</div></details>
 ${attachments.length ? `<div class="note">附件：${attachments.join('、')}</div>` : ''}
-<div class="btns">${url ? `<a class="btn primary" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" style="display:inline-grid;place-items:center;text-decoration:none">打开官方作业入口</a>` : '<span class="muted">官方作业入口暂不可用</span>'}<button class="btn" data-x="close">好的</button></div>`
+<div class="btns">${url ? `<a class="btn primary" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" style="display:inline-grid;place-items:center;text-decoration:none">打开官方作业入口</a>` : '<span class="muted">官方作业入口暂不可用</span>'}${embedded ? '' : '<button class="btn" data-x="close">好的</button>'}</div>`
 }
 
 
