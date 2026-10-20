@@ -338,14 +338,15 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
     openNotice(noticeId)
   }
 
-  function onNotice({ item, revised }) {
+  function onNotices(events) {
     if (view !== 'notice') return
-    renderList()
-    if (revised && selected === item.noticeId) {
-      detailCache.delete(cacheKey(item))
-      openNotice(item.noticeId)
-    }
+    const revised = events.find(event => event.revised && selected === event.item.noticeId)
+    if (revised) {
+      detailCache.delete(cacheKey(revised.item))
+      openNotice(revised.item.noticeId)
+    } else renderList()
   }
+  function onNotice(event) { onNotices([event]) }
 
   function noticeAction(action, id) {
     if (!store.notice(id)) return
@@ -482,7 +483,7 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
   })
 
   return {
-    render, renderList, renderDetail, setView, setFilter, setAcademy, setTrash, openNotice, openHomework, back, reveal, onNotice, patchRemindPill,
+    render, renderList, renderDetail, setView, setFilter, setAcademy, setTrash, openNotice, openHomework, back, reveal, onNotice, onNotices, patchRemindPill,
     get academy() { return academy },
     get filter() { return filter },
     get trash() { return trash },

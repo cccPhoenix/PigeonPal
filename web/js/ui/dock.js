@@ -38,18 +38,27 @@ ${btn({ id: 'me', label: '我的设置', html: `<span class="dock-me">${escapeHt
   }
 
   function setView(next) {
+    if (view === next) return
     view = next
-    render()
+    const buttons = root.querySelectorAll?.('[data-view]')
+    if (!buttons?.length) return render()
+    for (const button of buttons) {
+      if (button.dataset.view === view) button.setAttribute('aria-current', 'page')
+      else button.removeAttribute('aria-current')
+    }
   }
 
   // Badge-only update: re-rendering would restart the mark's animation and drop the gaze.
   function patchBadge(selector, n) {
-    const button = root.querySelector?.(selector)
-    if (!button) return false
+    if (!root.querySelector) return false
+    const button = root.querySelector(selector)
+    if (!button) return true // Optional source entry is absent.
     const el = button.querySelector('.badge')
     if (!n) el?.remove()
-    else if (el) el.textContent = n > 99 ? '99+' : String(n)
-    else button.insertAdjacentHTML('beforeend', badgeHTML(n))
+    else if (el) {
+      const text = n > 99 ? '99+' : String(n)
+      if (el.textContent !== text) el.textContent = text
+    } else button.insertAdjacentHTML('beforeend', badgeHTML(n))
     return true
   }
 

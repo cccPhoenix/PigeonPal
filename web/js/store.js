@@ -370,6 +370,7 @@ export function createStore(storage = globalThis.localStorage) {
       return { changed: true, added }
     },
     syncReminders(rows) {
+      let dirty = false
       for (const incoming of rows) {
         if (!incoming || typeof incoming.id !== 'string' || !Number.isFinite(incoming.dueAt)) continue
         const row = { ...incoming, channelId: state.channels.some(channel => channel.id === incoming.channelId) ? incoming.channelId : 'bot' }
@@ -378,13 +379,14 @@ export function createStore(storage = globalThis.localStorage) {
         // The runtime polls every couple of seconds; only a real change may re-render listeners.
         const changed = !existing || ['title', 'dueAt', 'status', 'channelId', 'noticeId', 'deliveredAt', 'updatedAt', 'automatic']
           .some(key => existing[key] !== row[key])
+        if (!existing || Object.keys(row).some(key => existing[key] !== row[key])) dirty = true
         if (existing) Object.assign(existing, row)
         else state.reminders.push({ ...row })
         if (changed) emit('reminders', row)
       }
-      save()
+      if (dirty) save()
     },
-    setEventCursor(cursor) { state.eventCursor = cursor; save() },
+    setEventCursor(cursor) { if (state.eventCursor === cursor) return; state.eventCursor = cursor; save() },
     upsertCalendarItem(fields) {
       const item = cleanCalendarItem(fields)
       if (!item) throw new Error('日历事项需要标题和有效日期')

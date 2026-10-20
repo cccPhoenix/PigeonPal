@@ -48,6 +48,27 @@ test('malformed notice rows are dropped and each source keeps its newest 40', ()
 
 const pane = () => ({ innerHTML: '', addEventListener() {} })
 
+test('a batched revision refreshes the selected notice detail without losing the latest row', async () => {
+  const store = createStore(null), listRoot = pane(), detailRoot = pane(), fetched = []
+  const first = item('selected', 'yunfeng', 5)
+  store.upsertNotice('src-yunfeng', first)
+  const rail = createRail({ listRoot, detailRoot, store, client: { notice: async id => {
+    fetched.push(id)
+    return { state: 'complete', content: `正文版本 ${fetched.length}`, url: first.url }
+  } } })
+  rail.openNotice('selected')
+  await new Promise(resolve => setImmediate(resolve))
+  const latest = { ...first, revision: 'r2', title: '新版标题' }
+  store.upsertNotice('src-yunfeng', latest)
+  store.upsertNotice('src-yunfeng', item('other', 'yunfeng', 6))
+  rail.onNotices([{ item: store.notice('other'), revised: false }, { item: latest, revised: true }])
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(fetched, ['selected', 'selected'])
+  assert.equal(rail.selected, 'selected')
+  assert.match(listRoot.innerHTML, /新版标题/)
+  assert.match(detailRoot.innerHTML, /正文版本 2/)
+})
+
 test('rail filter shows one source and marks the active chip', () => {
   const store = createStore(null)
   store.upsertNotice('src-yunfeng', item('a', 'yunfeng', 5))

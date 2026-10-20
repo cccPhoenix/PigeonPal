@@ -10,6 +10,7 @@ import { analysisFields, decisionCopy } from './services/notice-summary.js'
 import { homeworkDetailHTML, isHomework, homeworkReminderMessage } from './services/homework.js'
 import { systemNotify } from './services/scheduler.js'
 import { createIconRail } from './ui/dock.js'
+import { connectViewRefresh } from './ui/view-refresh.js'
 import { createHeader } from './ui/header.js'
 import { createTranscript } from './ui/transcript.js'
 import { createComposer } from './ui/composer.js'
@@ -208,15 +209,9 @@ store.on('message', m => {
   transcript.append(m)
   if (m.channelId === active && document.visibilityState === 'visible') store.markRead(m.channelId)
 })
-store.on('homework-snapshot', ({ channelId }) => { transcript.syncHomeworkSnapshot(channelId); rail.render(); calendar.render(); syncBadges() })
-store.on('unread', () => { rail.renderList(); syncBadges() })
+connectViewRefresh({ store, rail, calendar, transcript, syncBadges,
+  getView: () => noticeView.dataset.view, getActive: () => active })
 store.on('message-updated', message => { transcript.refreshNotice(message); syncBadges() })
-store.on('notice', e => {
-  rail.onNotice(e); calendar.render(); syncBadges()
-  if (e.recommendationChanged && store.state.messages[active]?.some(message => message.noticeHeadsUp && message.noticeId === e.item.noticeId)) transcript.render(active)
-})
-store.on('calendar', () => calendar.render())
-store.on('channels', () => rail.renderList())
 store.on('profile', patch => {
   applyPrefs()
   if (['look', 'image', 'botName', 'nickname'].some(k => k in patch)) {
@@ -224,12 +219,6 @@ store.on('profile', patch => {
     header.render(active, { animate: false })
     transcript.render(active)
   }
-})
-store.on('reminders', r => {
-  if (!r) return
-  calendar.render()
-  for (const m of store.state.messages[active] ?? []) if (m.reminderId === r.id || m.id === r.noticeId || m.noticeId === r.noticeId || m.item?.noticeId === r.noticeId) transcript.patch(m.id)
-  rail.patchRemindPill(r)
 })
 store.on('save-failed', () => toast('本地存储不可用，刷新后记录会丢失'))
 store.on('reset', () => location.reload())
@@ -676,7 +665,6 @@ applyPrefs()
 watchNoticeWidth(noticeView)
 dock.render()
 rail.render()
-calendar.render()
 setView('notice', { acknowledge: false })
 select('bot')
 syncBadges()
