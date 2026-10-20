@@ -21,6 +21,8 @@ import { createAuthClient } from './services/auth.js'
 import { openIdentityAuth as showIdentityAuth } from './ui/auth.js'
 import { createApiClient, apiErrorText } from './services/api.js'
 import { openApiSettings as showApiSettings } from './ui/api-settings.js'
+import { openUserProfile as showUserProfile } from './ui/user-profile.js'
+import { noticePushable, deliveryTransition } from './services/recommendations.js'
 import { popover, dialog, closeOverlay, overlayFor, toast } from './ui/overlays.js'
 import { icon } from './ui/icons.js'
 import { escapeHtml, plain, whenLabel, clock, personalize } from './ui/format.js'
@@ -59,6 +61,16 @@ function openIdentityAuth(opener) {
 
 function openApiSettings(opener) {
   showApiSettings({ client: apiClient, opener, onChange: refreshSourceStates })
+}
+
+function refreshRecommendations() {
+  sourcesFeed.refresh()
+  // A profile update can finish while another source request is in flight.
+  setTimeout(() => sourcesFeed.refresh(), 800)
+}
+
+function openUserProfile(opener) {
+  showUserProfile({ client: apiClient, opener, onChange: refreshRecommendations })
 }
 
 function sourceStateLabel(sourceId) {
@@ -181,7 +193,10 @@ store.on('message', m => {
 store.on('homework-snapshot', ({ channelId }) => { transcript.syncHomeworkSnapshot(channelId); rail.render(); calendar.render(); syncBadges() })
 store.on('unread', () => { rail.renderList(); syncBadges() })
 store.on('message-updated', message => { transcript.refreshNotice(message); syncBadges() })
-store.on('notice', e => { rail.onNotice(e); calendar.render(); syncBadges() })
+store.on('notice', e => {
+  rail.onNotice(e); calendar.render(); syncBadges()
+  if (e.recommendationChanged && store.state.messages[active]?.some(message => message.noticeHeadsUp && message.noticeId === e.item.noticeId)) transcript.render(active)
+})
 store.on('calendar', () => calendar.render())
 store.on('channels', () => rail.renderList())
 store.on('profile', patch => {
@@ -272,6 +287,7 @@ async function run(ch, stream) {
 }
 
 function applyAction(ch, { name, args }) {
+  if (name === 'user-profile.updated') refreshRecommendations()
   if (name === 'profile.update') store.setProfile({ nickname: args.nickname })
   if (name === 'reminder.upsert') store.syncReminders([args])
   if (name === 'calendar.upsert') {
@@ -450,6 +466,7 @@ function openMeMenu(anchor) {
   const pop = popover(anchor, `<div class="pop-title">${escapeHtml(p.nickname || '你好')}</div>
 <button class="mi" data-go="reminders">${icon('bell', 16)}提醒<span class="hint">${count || ''}</span></button>
 <button class="mi" data-go="bot">${icon('sparkle', 16)}形象与称呼</button>
+<button class="mi" data-go="user-profile">${icon('graduate', 16)}用户画像</button>
 <button class="mi" data-go="notify">${icon('rss', 16)}主动消息</button>
 <button class="mi" data-go="auth">${icon('key', 16)}身份认证</button>
 <button class="mi" data-go="api">${icon('settings', 16)}API 设置</button>
@@ -593,6 +610,7 @@ const settingsApi = {
   store,
   openIdentityAuth,
   openApiSettings,
+  openUserProfile,
   async reminder(id, patch) {
     const { reminder } = await apiClient.updateReminder(id, patch)
     store.syncReminders([reminder])
@@ -644,7 +662,20 @@ startGaze(document)
 refreshSourceStates()
 
 let homeworkSnapshotReady = false
-startFeed({
+function receiveNotice(channelId, item, alreadySeen = false) {
+  if (!store.channel(channelId)) return
+  const previous = store.state.noticeDelivery[item.noticeId]
+  if (alreadySeen && previous !== 'pending' && store.notice(item.noticeId)) return
+  const transition = deliveryTransition(previous, item)
+  store.upsertNotice(channelId, item, { unread: transition.deliver })
+  if (transition.state !== previous) store.setNoticeDelivery(item.noticeId, transition.state)
+  if (!transition.deliver || !noticePushable(item)) return
+  const text = headsUp(item, store.channel(channelId).title)
+  store.addMessage('bot', { role: 'bot', kind: 'text', text, noticeId: item.noticeId, noticeHeadsUp: true }, { unread: active !== 'bot' })
+  announce(channelId, store.channel(channelId).title, plain(text, store.state.profile))
+}
+
+const sourcesFeed = startFeed({
   adapters: services.sources,
   intervalMs: services.feedInterval,
   seen: { has: id => store.state.seenItems.includes(id), add: id => { store.state.seenItems.push(id); store.save() } },
@@ -656,15 +687,8 @@ startFeed({
     }
     homeworkSnapshotReady = true
   },
-  onItem(channelId, item) {
-    if (!store.channel(channelId)) return
-    const live = Number.isFinite(item.receivedAt) && Date.now() - item.receivedAt < 60_000
-    const { created, revised } = store.upsertNotice(channelId, item, { unread: live })
-    if (!live || !(created || revised)) return
-    const text = headsUp(item, store.channel(channelId).title)
-    if (created) store.addMessage('bot', { role: 'bot', kind: 'text', text, noticeId: item.noticeId }, { unread: active !== 'bot' })
-    announce(channelId, store.channel(channelId).title, plain(text, store.state.profile))
-  },
+  onItem: receiveNotice,
+  onSeenItem: (channelId, item) => receiveNotice(channelId, item, true),
 })
 
 refreshRuntime()

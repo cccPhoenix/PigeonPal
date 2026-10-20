@@ -12,13 +12,14 @@
 import { clock, dayLabel } from '../ui/format.js'
 import { analysisFields, decisionCopy } from './notice-summary.js'
 import { cleanHomework } from './homework.js'
+import { cleanRecommendation } from './recommendations.js'
 
 export const NOTICE_CATEGORIES = {
   academic: '学术报告', teaching: '教学教务', activity: '校园活动',
   deadline: '申请／报名', service: '校园服务', other: '其他通知',
 }
 
-export function startFeed({ adapters, seen, onItem, onSnapshot, intervalMs = 60_000 }) {
+export function startFeed({ adapters, seen, onItem, onSnapshot, onSeenItem, intervalMs = 60_000 }) {
   let stopped = false
   let polling = false
   const poll = async () => {
@@ -31,7 +32,8 @@ export function startFeed({ adapters, seen, onItem, onSnapshot, intervalMs = 60_
           if (adapter.snapshot && onSnapshot) { onSnapshot(adapter.channelId, items); continue }
           for (const item of items.sort((a, b) => a.publishedAt - b.publishedAt)) {
             const key = item.revision ? `${item.id}:${item.revision}` : item.id
-            if (stopped || seen.has(key)) continue
+            if (stopped) continue
+            if (seen.has(key)) { onSeenItem?.(adapter.channelId, item); continue }
             onItem(adapter.channelId, item)
             seen.add(key)
           }
@@ -43,7 +45,9 @@ export function startFeed({ adapters, seen, onItem, onSnapshot, intervalMs = 60_
   }
   poll()
   const timer = setInterval(poll, intervalMs)
-  return () => { stopped = true; clearInterval(timer) }
+  const stop = () => { stopped = true; clearInterval(timer) }
+  stop.refresh = poll
+  return stop
 }
 
 // How the bot announces an item: one short line with an emoji, then a friendly nudge.
@@ -94,12 +98,16 @@ export function localAdapters(client) {
     async fetch() {
       const rows = []
       let offset = 0
+      let pages = 0
       do {
         const data = await client.notices(channel.sourceId, offset)
         if (!Array.isArray(data.items)) throw new Error('Invalid notice list')
         rows.push(...data.items)
+        pages += 1
+        if (data.nextOffset === null || data.nextOffset === undefined) break
+        if (!Number.isSafeInteger(data.nextOffset) || data.nextOffset <= offset || pages >= 500) throw new Error('Invalid notice pagination')
         offset = data.nextOffset
-      } while (Number.isSafeInteger(offset) && offset > 0)
+      } while (true)
       return rows.map(row => {
         if (channel.sourceId === 'xzzd') {
           const homework = cleanHomework(row.homework)
@@ -130,6 +138,7 @@ export function localAdapters(client) {
           publishedDate: row.publishedAt || '',
           publishedAt: Date.parse(`${row.publishedAt}T00:00:00+08:00`) || Date.parse(row.firstSeenAt) || Date.now(),
           receivedAt: Date.parse(row.lastChangedAt || row.firstSeenAt),
+          recommendation: cleanRecommendation(row.recommendation),
           kind: ({ academic: 'talk', activity: 'club', deadline: 'deadline' })[result?.category] || 'notice',
           category: result?.category || '',
           eventAt: exactTime(result?.eventAt), eventEnd: exactTime(result?.eventEnd),

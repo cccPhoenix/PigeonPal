@@ -21,11 +21,13 @@ def iso(value):
 
 
 class NoticeProcessor:
-    def __init__(self, notices, path: Path, config: AIConfig, *, client=None, clock=time.time, on_result=None):
+    def __init__(self, notices, path: Path, config: AIConfig, *, client=None, clock=time.time, on_result=None,
+                 user_profile=None, recommendations=None):
         self.notices, self.config = notices, config
         self.client = client or ModelClient(config)
         self.clock = clock
         self.on_result = on_result
+        self.user_profile, self.recommendations = user_profile, recommendations
         self.stop = threading.Event()
         self.wake = threading.Event()
         self.lock = threading.RLock()
@@ -38,6 +40,7 @@ class NoticeProcessor:
         self.active = None
         self.generation = 0
         self.storage_error = None
+        self.prefer_recommendations = False
         try:
             self.cache = AnalysisStore(path)
         except StorageError:
@@ -132,6 +135,61 @@ class NoticeProcessor:
         return {"state": "pending" if self.config.configured else "unconfigured",
                 "error": self.config.error, "result": None}
 
+    def recommendation(self, notice):
+        fallback = {"state": "unconfigured", "decision": "uncertain", "allowPush": True,
+                    "priority": 50, "reason": "尚未设置画像或完成匹配，保留通知。", "evidence": [],
+                    "profileVersion": 0, "override": None, "error": None, "deferPush": False}
+        if self.recommendations is None or notice.get("sourceId") == "xzzd":
+            return fallback
+        try:
+            fingerprint = self.fingerprint(notice)
+            result = self.recommendations.view(notice, fingerprint)
+            result["deferPush"] = False
+            # Wait briefly for the ordinary extraction+matching worker, rather
+            # than first sending a headline which a moment later is excluded.
+            # All data remains visible; failures, no key and timeout pass through.
+            if (result.get("state") == "pending" and result.get("override") != "keep"
+                    and self.config.configured and self.config.automatic
+                    and self.user_profile is not None and self.user_profile.needs_personalization()):
+                first = notice.get("firstSeenAt")
+                if isinstance(first, str):
+                    first = datetime.fromisoformat(first.replace("Z", "+00:00")).timestamp()
+                if type(first) in {int, float} and 0 <= self.clock() - first < 180:
+                    result["deferPush"] = True
+            return result
+        except (AIError, StorageError, ValueError, TypeError):
+            return fallback
+
+    def _recommend_once(self):
+        if not self.recommendations or not self.config.automatic:
+            return False
+        for notice in self.notices.export_items():
+            fingerprint = None
+            try:
+                self._allowed(notice)
+                analysis = self.analysis(notice)
+                if analysis["state"] != "ready":
+                    continue
+                fingerprint = self.fingerprint(notice)
+                if not self.recommendations.needs_assessment(notice, fingerprint):
+                    continue
+                request = self.recommendations.assessment_input(notice, analysis["result"], fingerprint)
+                version = request["profile"]["version"]
+                generation, client = self.generation, self.client
+                raw = client.assess_relevance(request)
+                current = self.notices.get_notice(notice["id"])
+                if self.stop.is_set() or generation != self.generation or current is None or self.fingerprint(current) != fingerprint:
+                    return True
+                self.recommendations.save_result(current, fingerprint, raw, profile_version=version)
+                if self.on_result and self.config.automatic_deadlines:
+                    self.on_result(current, analysis["result"])
+                return True
+            except (AIError, StorageError) as error:
+                if fingerprint is not None:
+                    self.recommendations.fail(notice, fingerprint, getattr(error, "code", "recommendation_failed"))
+                    return True
+        return False
+
     def status(self):
         counts = {"ready": 0, "pending": 0, "processing": 0, "failed": 0, "blocked": 0, "waiting_body": 0, "unconfigured": 0, "local_only": 0}
         for notice in self.notices.export_items():
@@ -211,9 +269,13 @@ class NoticeProcessor:
     def run_once(self):
         if self.stop.is_set() or not self.config.configured or self.storage_error or self.blocked or self.retry_at > self.clock():
             return False
+        if self.prefer_recommendations and not self.queue:
+            self.prefer_recommendations = False
+            if self._recommend_once():
+                return True
         notice = self._next()
         if notice is None:
-            return False
+            return self._recommend_once()
         notice_id = notice["id"]
         self.active = notice_id
         try:
@@ -229,7 +291,17 @@ class NoticeProcessor:
                 record["attemptCount"] += 1
                 self.cache.put(record)
             try:
-                result = validate_result(client.analyze(prepare_notice(notice)))
+                recommendation = None
+                version = None
+                if (self.user_profile is not None and self.recommendations is not None
+                        and self.user_profile.needs_personalization() and callable(getattr(client, "analyze_personalized", None))):
+                    projection = self.user_profile.model_context()
+                    version = projection["version"]
+                    packet = client.analyze_personalized(prepare_notice(notice), projection)
+                    result = validate_result(packet["analysis"])
+                    recommendation = packet.get("recommendation")
+                else:
+                    result = validate_result(client.analyze(prepare_notice(notice)))
                 if notice.get("attachments"):
                     result["notes"] = (["附件正文未读取，摘要仅依据网页正文。"] + result["notes"])[:20]
                 with self.lock:
@@ -239,6 +311,11 @@ class NoticeProcessor:
                     record.update(state="ready", result=result, processedAt=iso(self.clock()), error=None)
                     self.last_error = None
                     self.cache.put(record)
+                    if version is not None:
+                        try:
+                            self.recommendations.save_result(current, fingerprint, recommendation, profile_version=version)
+                        except (AIError, StorageError) as error:
+                            self.recommendations.fail(current, fingerprint, getattr(error, "code", "recommendation_failed"))
                     if self.on_result is not None and self.config.automatic_deadlines:
                         try:
                             self.on_result(current, result)
@@ -270,4 +347,5 @@ class NoticeProcessor:
             with self.lock:
                 self.scheduled.discard(notice_id)
             self.active = None
+            self.prefer_recommendations = self.recommendations is not None
         return True

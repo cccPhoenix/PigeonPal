@@ -4,6 +4,7 @@ import { NOTICE_CATEGORIES, NOTICE_DRAG_TYPE, isAttachable } from '../services/s
 import { apiErrorText } from '../services/api.js'
 import { toast } from './overlays.js'
 import { cleanHomework, homeworkDetailHTML, homeworkTime, isHomeworkCard } from '../services/homework.js'
+import { cleanRecommendation, recommendationLabel, evidenceText, orderRecommended } from '../services/recommendations.js'
 
 // The notice view: crawled notices, typeset rather than chatted. The list pane groups by
 // day and filters by source; the detail pane is a key/value table fed by the list plus the
@@ -24,6 +25,7 @@ const safeHref = url => (/^https?:\/\//.test(url ?? '') ? escapeHtml(url) : '')
 export function createRail({ listRoot, detailRoot, store, client, onRemind, onAttach, onRead }) {
   let view = 'notice'
   let filter = null
+  let recommendationMode = 'recommended'
   let selected = null
   let selectedHomework = null
   let homeworkCourse = null
@@ -61,6 +63,7 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
   <span class="rail-text">
     <span class="rail-title">${escapeHtml(n.title)}</span>
     <span class="rail-sub">${escapeHtml(c?.title ?? '')} · ${escapeHtml(shortTime(n.publishedAt))}</span>
+    <span class="rail-recommendation" title="${escapeHtml(n.recommendation?.reason || '')}">${escapeHtml(recommendationLabel(n.recommendation))}</span>
   </span>
   ${current ? '<span class="rail-current">正在查看</span>' : ''}
 </button>`
@@ -134,27 +137,32 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
 
   function renderList() {
     if (view === 'homework') return renderHomeworkList()
-    const all = Object.values(store.state.notices)
+    let all = Object.values(store.state.notices)
       .filter(n => !filter || n.sourceId === filter)
       .sort((a, b) => (b.publishedAt ?? 0) - (a.publishedAt ?? 0))
+    if (recommendationMode === 'recommended') all = orderRecommended(all)
     const rows = []
     let lastDay = null
     for (const n of all) {
       const day = dayLabel(n.publishedAt ?? Date.now())
-      if (day !== lastDay) { rows.push(`<div class="divider">${escapeHtml(day)}</div>`); lastDay = day }
+      if (recommendationMode === 'all' && day !== lastDay) { rows.push(`<div class="divider">${escapeHtml(day)}</div>`); lastDay = day }
       rows.push(itemHTML(n))
     }
     repaint(listRoot, `<div class="rail-top">
-  <span class="rail-head">通知</span>
+  <span class="rail-head">通知</span><div class="seg" aria-label="通知推荐范围"><button data-rail="recommendation-mode" data-mode="recommended" aria-pressed="${recommendationMode === 'recommended'}">推荐</button><button data-rail="recommendation-mode" data-mode="all" aria-pressed="${recommendationMode === 'all'}">全部通知</button></div>
 </div>
 <div class="chips rail-chips">${chipsHTML()}</div>
-<div class="rail-list pane-scroll">${rows.join('') || `<div class="empty">${filter ? '这个来源还没有通知' : '还没有通知，爬虫每五分钟看一次'}</div>`}</div>`)
+<div class="rail-list pane-scroll">${recommendationMode === 'recommended' && rows.length ? '<div class="divider">按相关性排序 · 可能有用的继续保留</div>' : ''}${rows.join('') || `<div class="empty">${recommendationMode === 'recommended' ? '暂时没有推荐，可以切换到「全部通知」查看原始通知。' : filter ? '这个来源还没有通知' : '还没有通知，爬虫每五分钟看一次'}</div>`}</div>`)
   }
 
   function detailRows(n, cached) {
     const ready = n.analysisState === 'ready'
     let rows = row('发布日期', escapeHtml(n.publishedDate || '原站发布日期待补齐'))
       + row('整理状态', escapeHtml(ANALYSIS_STATE[n.analysisState] ?? n.analysisState ?? ''))
+    rows += row('推荐判断', escapeHtml(recommendationLabel(n.recommendation)))
+      + row('判断理由', escapeHtml(n.recommendation?.reason || '画像不足或尚未判断时继续保留。'))
+    const evidence = n.recommendation?.evidence?.map(evidenceText).filter(Boolean) || []
+    if (evidence.length) rows += row('原文依据', evidence.map(text => `<div>「${escapeHtml(text)}」</div>`).join(''))
     if (ready) {
       rows += row('通知类型', escapeHtml(n.noticeType))
         + row('参与方式', escapeHtml(n.participation))
@@ -213,6 +221,7 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
     <button class="pill${reminder ? ' on' : ''}" data-act="remind">${icon('bell', 15)}${reminder ? `已提醒 · ${escapeHtml(whenLabel(reminder.dueAt))}` : '提醒我'}</button>
     ${onAttach ? `<button class="pill" data-act="attach">${icon('attach', 15)}添加到对话</button>` : ''}
     ${canReprocess ? `<button class="pill" data-act="reprocess">${icon('sparkle', 15)}重新整理</button>` : ''}
+    ${n.recommendation?.override === 'keep' ? `<button class="pill" data-act="recommendation-auto">恢复自动判断</button>` : n.recommendation?.allowPush === false ? `<button class="pill" data-act="recommendation-keep">${icon('check', 15)}仍然推荐</button>` : ''}
   </div>
 </div>`)
   }
@@ -300,6 +309,7 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
     const n = store.notice(noticeId)
     if (!n) return
     filter = n.sourceId || null
+    if (n.recommendation?.allowPush === false) recommendationMode = 'all'
     renderList()
     openNotice(noticeId)
   }
@@ -348,6 +358,8 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
       if (picked) return selected === picked.dataset.notice ? back() : openNotice(picked.dataset.notice)
       const chip = e.target.closest?.('[data-rail="filter"]')
       if (chip) return setFilter(chip.dataset.src || null)
+      const mode = e.target.closest?.('[data-rail="recommendation-mode"]')
+      if (mode) { recommendationMode = mode.dataset.mode === 'all' ? 'all' : 'recommended'; return renderList() }
       if (e.target.closest?.('[data-rail="back"]')) return back()
       const act = e.target.closest?.('[data-act]')
       if (!act) return
@@ -360,6 +372,16 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
       if (act.dataset.act === 'remind' && n) return onRemind?.(n, act)
       if (act.dataset.act === 'attach' && n) return onAttach?.(n)
       if (act.dataset.act === 'retry' && n) { detailCache.delete(cacheKey(n)); return openNotice(n.noticeId) }
+      if (['recommendation-keep', 'recommendation-auto'].includes(act.dataset.act) && n) {
+        act.disabled = true
+        client.setRecommendationOverride(n.noticeId, act.dataset.act === 'recommendation-keep' ? 'keep' : 'auto').then(value => {
+          const recommendation = cleanRecommendation(value.recommendation || value)
+          store.upsertNotice(channelOf(n)?.id || `src-${n.sourceId}`, { ...n, recommendation })
+          render()
+          toast(recommendation?.override === 'keep' ? '已保留在推荐中' : '已恢复自动判断')
+        }).catch(error => { act.disabled = false; toast(apiErrorText(error)) })
+        return
+      }
       if (act.dataset.act === 'reprocess' && n) {
         client.process(n.noticeId).then(() => toast('已加入整理队列')).catch(error => toast(apiErrorText(error)))
       }

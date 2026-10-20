@@ -137,6 +137,8 @@ class NoticeDecisionTests(unittest.TestCase):
             state = 'pending'
             def analysis(self, notice):
                 return dict(state=self.state, error=None, result=None)
+            def recommendation(self, notice):
+                return dict(decision='uncertain', allowPush=True)
         backend = object.__new__(LocalBackend)
         backend.store, backend.ai = self.notices, AI()
         first = backend.notices('yunfeng')['items'][0]

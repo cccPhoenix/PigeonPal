@@ -70,7 +70,7 @@ export function createAIChat(client) {
       if (!Array.isArray(result.events) || !result.events.some(event => event?.type === 'message' && typeof event.text === 'string' && event.text.trim())) throw new Error('Invalid chat events')
       for (const event of result.events) {
         if (!event || typeof event !== 'object') continue
-        if (event.type === 'action' && ['profile.update', 'reminder.upsert', 'calendar.upsert'].includes(event.name)) yield event
+        if (event.type === 'action' && ['profile.update', 'reminder.upsert', 'calendar.upsert', 'user-profile.updated'].includes(event.name)) yield event.name === 'user-profile.updated' ? { type: 'action', name: event.name, args: { version: event.args?.version } } : event
         else if (event.type === 'message' && typeof event.text === 'string') {
           if (event.kind === 'notice' && event.queryResult === true && isHomework(event.item)) {
             yield { type: 'message', kind: 'notice', queryResult: true, localOnly: true,

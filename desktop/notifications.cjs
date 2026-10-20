@@ -48,7 +48,7 @@ class NotificationMonitor {
       if(!Array.isArray(reminders)) throw new Error('invalid_reminders')
       const next=structuredClone(this.state), groups=new Map()
       for(const r of reminders) {
-        if(typeof r.id!=='string' || !Number.isFinite(r.deliveredAt) || r.status!=='pending' || next.reminders[r.id]===r.deliveredAt) continue
+        if(typeof r.id!=='string' || !Number.isFinite(r.deliveredAt) || r.status!=='pending' || r.notifyEligible===false || next.reminders[r.id]===r.deliveredAt) continue
         const channelId=/^(bot|src-[\w-]{1,48})$/.test(r.channelId)?r.channelId:'bot'
         if(!groups.has(channelId)) groups.set(channelId,[])
         groups.get(channelId).push(r)
@@ -56,7 +56,7 @@ class NotificationMonitor {
       for(const [channelId,rows] of groups) {
         if(await this.send(rows,`${this.state.preferences.botName} · 提醒到时间了`,channelId,async queued=>{
           const fresh=(await this.api('/api/reminders')).reminders
-          return queued.filter(old=>fresh.some(r=>r.id===old.id&&r.status==='pending'&&r.deliveredAt===old.deliveredAt))
+          return queued.filter(old=>fresh.some(r=>r.id===old.id&&r.status==='pending'&&r.notifyEligible!==false&&r.deliveredAt===old.deliveredAt))
         })) for(const r of rows) next.reminders[r.id]=r.deliveredAt
       }
       this.commit(next)
@@ -78,8 +78,16 @@ class NotificationMonitor {
           if(!before) next.sources[source.id]=Object.fromEntries(ids.map(row=>[row.id,true]))
           else {
             const fresh=ids.filter(row=>!before[row.id])
-            if(!await this.send(fresh.filter(row=>row.notifyEligible!==false),source.title||'校园新通知',`src-${source.id}`)) continue
-            for(const row of fresh) before[row.id]=true
+            if(!await this.send(fresh.filter(row=>row.notifyEligible!==false&&!row.deferPush),source.title||'校园新通知',`src-${source.id}`,async queued=>{
+              const eligible=new Set(); let nextOffset=0
+              do {
+                const page=await this.api(`/api/notification-candidates?source=${source.id}&offset=${nextOffset}`)
+                for(const item of page.items??[]) if(item.notifyEligible!==false&&!item.deferPush) eligible.add(item.id)
+                nextOffset=page.nextOffset
+              } while(Number.isSafeInteger(nextOffset)&&nextOffset>0)
+              return queued.filter(row=>eligible.has(row.id))
+            })) continue
+            for(const row of fresh) if(!row.deferPush) before[row.id]=true
           }
           this.commit(next)
         } catch { /* One inaccessible source must not block others or reminders. */ }

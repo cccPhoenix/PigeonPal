@@ -7,6 +7,7 @@ import { LOCAL_CHANNELS, headsUp } from './services/sources.js'
 import { DECISION_FIELDS } from './services/notice-summary.js'
 import { cleanHomework, isHomework, isHomeworkCard, defaultHomeworkMessages, homeworkCopy } from './services/homework.js'
 import { validCalendarDate, validCalendarTime } from './services/calendar.js'
+import { cleanRecommendation } from './services/recommendations.js'
 
 export const STORAGE_KEY = 'pigeonpal.v1'
 // 'notice' is accepted only so legacy stored messages can be migrated into `notices`.
@@ -37,6 +38,7 @@ export function createInitialState() {
     reminders: [],
     unread: {},
     seenItems: [],
+    noticeDelivery: {},
     eventCursor: 0,
   }
 }
@@ -93,6 +95,7 @@ export function hydrate(raw) {
           ...(typeof m.reminderId === 'string' ? { reminderId: m.reminderId } : {}),
           ...(typeof m.noticeId === 'string' ? { noticeId: m.noticeId.slice(0, 1000) } : {}),
           ...(m.localOnly === true ? { localOnly: true } : {}),
+          ...(m.noticeHeadsUp === true ? { noticeHeadsUp: true } : {}),
           ...(m.queryResult === true && isHomework(m.item) ? { queryResult: true } : {}),
           ...(['notice', 'reminder'].includes(m.kind) && m.item && typeof m.item === 'object' ? { item: cleanItem(m.item) } : {}) }
         // Legacy: notices used to live in the transcript as cards. Move them to the rail
@@ -139,6 +142,13 @@ export function hydrate(raw) {
         ...(typeof r.automatic === 'boolean' ? { automatic: r.automatic } : {}) }))
   }
   if (Array.isArray(stored.seenItems)) fresh.seenItems = stored.seenItems.filter(id => typeof id === 'string').slice(-2000)
+  if (stored.noticeDelivery && typeof stored.noticeDelivery === 'object') {
+    for (const [id, value] of Object.entries(stored.noticeDelivery).slice(-1000)) if (id.length <= 200 && ['pending', 'delivered', 'historical', 'filtered'].includes(value)) fresh.noticeDelivery[id] = value
+  }
+  for (const message of fresh.messages.bot) if (message.role === 'bot' && message.noticeId && (message.noticeHeadsUp || message.text.startsWith('🔔'))) {
+    message.noticeHeadsUp = true
+    fresh.noticeDelivery[message.noticeId] = 'delivered'
+  }
   if (Number.isSafeInteger(stored.eventCursor) && stored.eventCursor >= 0) fresh.eventCursor = stored.eventCursor
   return fresh
 }
@@ -159,6 +169,7 @@ function cleanItem(item) {
   if (typeof item.bodyStatus === 'string') out.bodyStatus = item.bodyStatus.slice(0, 600)
   if (item.real === true) out.real = true
   if (isHomework(out)) { out.homework = cleanHomework(item.homework); out.analysisState = 'local_only' }
+  else if (item.recommendation) out.recommendation = cleanRecommendation(item.recommendation)
   if (typeof item.fetchable === 'boolean') out.fetchable = item.fetchable
   if (Number.isSafeInteger(item.contentVersion)) out.contentVersion = item.contentVersion
   for (const key of ['audience', 'notes']) if (Array.isArray(item[key])) out[key] = item[key].filter(value => typeof value === 'string').slice(0, 20).map(value => value.slice(0, 300))
@@ -195,7 +206,12 @@ export function createStore(storage = globalThis.localStorage) {
   const save = () => {
     clearTimeout(saveTimer)
     saveTimer = setTimeout(() => {
-      try { storage?.setItem(STORAGE_KEY, JSON.stringify(state)); saveFailed = false } catch { if (!saveFailed) emit('save-failed'); saveFailed = true }
+      // The live catalog contains all server metadata so filtered old notices
+      // remain recoverable. Keep only a small warm cache in browser storage;
+      // the next feed restores the complete catalog without loading any body.
+      const notices = { ...state.notices }
+      trimNotices(notices)
+      try { storage?.setItem(STORAGE_KEY, JSON.stringify({ ...state, notices })); saveFailed = false } catch { if (!saveFailed) emit('save-failed'); saveFailed = true }
     }, 200)
   }
 
@@ -209,6 +225,12 @@ export function createStore(storage = globalThis.localStorage) {
     lastMessage: id => state.messages[id]?.at(-1),
     notice: id => state.notices[id],
     noticesOf: sourceId => Object.values(state.notices).filter(n => n.sourceId === sourceId).sort((a, b) => (b.publishedAt ?? 0) - (a.publishedAt ?? 0)),
+    setNoticeDelivery(id, value) {
+      if (!['pending', 'delivered', 'historical', 'filtered'].includes(value)) return
+      state.noticeDelivery[id] = value
+      for (const key of Object.keys(state.noticeDelivery).slice(0, -1000)) delete state.noticeDelivery[key]
+      save()
+    },
 
     addMessage(channelId, fields, { unread = false } = {}) {
       const message = { id: newId('msg'), channelId, at: Date.now(), kind: 'text', ...fields }
@@ -236,11 +258,11 @@ export function createStore(storage = globalThis.localStorage) {
       const existing = state.notices[id]
       const created = !existing
       const revised = !created && existing.revision !== item.revision
+      const recommendationChanged = !created && JSON.stringify(existing.recommendation) !== JSON.stringify(item.recommendation)
       state.notices[id] = cleanItem(item)
-      trimNotices(state.notices)
       if (unread && (created || revised)) state.unread[channelId] = (state.unread[channelId] ?? 0) + 1
       save()
-      emit('notice', { channelId, item: state.notices[id], created, revised })
+      emit('notice', { channelId, item: state.notices[id], created, revised, recommendationChanged })
       return { created, revised }
     },
     syncHomeworkSnapshot(items, { now = Date.now(), unread = false } = {}) {

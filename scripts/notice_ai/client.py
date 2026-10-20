@@ -7,7 +7,29 @@ import socket
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from .schema import AIError, RESULT_SCHEMA, SYSTEM_PROMPT, decode_json
+from .schema import AIError, RESULT_SCHEMA, SYSTEM_PROMPT, decode_json, validate_result
+from .recommendation import RECOMMENDATION_SCHEMA, RELEVANCE_PROMPT, model_profile
+
+
+def _json_object(content):
+    try:
+        if not isinstance(content, str) or len(content) > 100_000:
+            raise ValueError
+        def unique_pairs(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError
+                result[key] = value
+            return result
+        def reject_constant(value):
+            raise ValueError
+        value = json.loads(content, object_pairs_hook=unique_pairs, parse_constant=reject_constant)
+        if not isinstance(value, dict):
+            raise ValueError
+        return value
+    except (TypeError, ValueError):
+        raise AIError("ai_result_invalid") from None
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -59,6 +81,33 @@ class ModelClient:
             {"role": "user", "content": json.dumps(notice_input, ensure_ascii=False)},
         ], json_mode=True)
         return decode_json(message.get("content"))
+
+    def analyze_personalized(self, notice_input, profile_input):
+        """One request extracts the article and evaluates its minimum profile.
+
+        An invalid recommendation must not discard an otherwise valid summary;
+        RecommendationService validates that independent part after caching it.
+        """
+        schema = {"type": "object", "required": ["analysis", "recommendation"],
+                  "properties": {"analysis": RESULT_SCHEMA, "recommendation": RECOMMENDATION_SCHEMA}}
+        prompt = SYSTEM_PROMPT + "\n" + RELEVANCE_PROMPT + "\n输出对象必须包含 analysis 和 recommendation。\nJSON schema: " + json.dumps(schema, ensure_ascii=False)
+        message = self.complete([
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": json.dumps({"notice": notice_input, "profile": model_profile(profile_input)}, ensure_ascii=False)},
+        ], json_mode=True)
+        value = _json_object(message.get("content"))
+        analysis = validate_result(value.get("analysis"))
+        raw = value.get("recommendation")
+        return {"analysis": analysis, "recommendation": raw if isinstance(raw, dict) else {}}
+
+    def assess_relevance(self, assessment_input):
+        value = {key: assessment_input[key] for key in ("analysis", "eligibility", "notice") if key in assessment_input}
+        value["profile"] = model_profile(assessment_input.get("profile"))
+        message = self.complete([
+            {"role": "system", "content": RELEVANCE_PROMPT + "\nJSON schema: " + json.dumps(RECOMMENDATION_SCHEMA, ensure_ascii=False)},
+            {"role": "user", "content": json.dumps(value, ensure_ascii=False)},
+        ], json_mode=True)
+        return _json_object(message.get("content"))
 
     def complete(self, messages, *, json_mode=False, tools=None):
         config = self.config
