@@ -34,13 +34,14 @@
 
 | 你的电脑 | 安装文件 | 当前状态 |
 | --- | --- | --- |
-| Windows 10 / 11，Intel 或 AMD 64 位 | `PigeonPal-Setup-0.3.1-x64.exe` | 待 Windows 同学构建、验收后上传 |
+| Windows 10 / 11，Intel 或 AMD 64 位 | `PigeonPal-Setup-0.3.1-x64.exe` | 已在 Windows x64 构建并通过解包应用离线验收；安装流程待一次性 VM 验证 |
 | macOS，Apple 芯片（M1 / M2 / M3 / M4 等） | `PigeonPal-0.3.1-mac-arm64.dmg` | 已构建并通过本机离线验收 |
 
 - **Windows：**打开 `.exe`，按向导安装，从桌面或开始菜单启动「鸽友 PigeonPal」。
 - **Mac：**打开 `.dmg`，将「鸽友 PigeonPal」拖入「应用程序」，再从应用程序打开。Intel Mac 暂不提供安装包。
 - 当前是试用版本：Windows 尚无发布者代码签名，Mac 使用临时签名、尚未通过 Apple 公证，系统可能提示无法验证开发者。如果系统阻止打开，请保留提示并联系开发者确认，不需要关闭系统安全功能。
 - 不需要删除旧数据来升级；先从托盘 / 菜单栏退出旧版，再安装新版。安装包与各平台实际检查结果见 [桌面版说明](docs/desktop.md)。
+- Windows 的首次启动报告、`SHA256SUMS-windows.txt` 和[实际验收记录](docs/windows-0.3.1-acceptance.md)随 Release 提供。系统通知显示、通知点击和托盘鼠标操作仍待真实桌面确认。
 
 ## 第一次打开，按这几步设置
 

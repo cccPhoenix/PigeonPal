@@ -49,7 +49,7 @@ python build/smoke_desktop.py dist/win-unpacked/PigeonPal.exe dist/desktop-self-
 
 `build/smoke_windows.ps1` 会静默安装并修改该用户的应用注册，只在一次性 Windows VM / runner 执行。本机非 runner 必须显式传入 `-DisposableMachine`；不要在有个人旧版安装的电脑上无提示运行此安装脚本。
 
-PyInstaller 在当前操作系统冻结 Python，macOS 产物不能作为 Windows exe；Windows workflow 必须真正运行并通过，不能只靠配置文件宣称安装包完成。本版由 Windows 同学在本机运行 `npm ci`、`python -m pip install -r requirements-build.txt`、离线测试与 `npm run dist:win`，再运行下方 smoke。`build/windows-workflow.yml` 保留为未启用模板；当前没有活动 Windows Actions 工作流，不需要为了本机打包补充 workflow 权限。Windows exe 在真实构建、检查成功后再上传，不能把模板或 Mac 检查作为 Windows 产物。
+PyInstaller 在当前操作系统冻结 Python，macOS 产物不能作为 Windows exe；构建必须真正运行并通过，不能只靠 workflow 配置文件宣称安装包完成。v0.3.1 已在 Windows x64 本机依次运行 `npm ci`、`python -m pip install -r requirements-build.txt`、两套测试、`npm run dist:win` 和两个 smoke，详见[本次 Windows 验收记录](windows-0.3.1-acceptance.md)。`build/windows-workflow.yml` 保留为未启用模板；当前没有活动 Windows Actions 工作流，不需要为了本机打包补充 workflow 权限。
 
 Windows 构建暂未接入发布者代码签名证书；第一版按内部试用包分发，不宣称已签名或已通过系统信誉检查。为同学大规模发布前，需完成下面实际验收。
 
@@ -85,4 +85,14 @@ Windows 由 `build/smoke_windows.ps1` 检查静默安装，并使用同一 smoke
 
 Apple Silicon 本机的冻结服务检查通过：39 个网页资源与源码逐字节一致，空账号、加密 API 配置保存/重启读取、画像/提醒持久化、离线到期和正常退出均通过。DMG 校验及应用深层签名结构检查通过；从镜像复制到包含中文和空格的临时安装路径后，应用的 10 项首次启动检查通过。
 
-计时是本机离线样本，不是跨设备性能保证。系统通知权限/实际弹窗、真实校园数据和真实模型仍需使用者验证；Windows 尚未构建，本轮不能标记为通过。
+计时是本机离线样本，不是跨设备性能保证。系统通知权限/实际弹窗、真实校园数据和真实模型仍需使用者验证。
+
+### 本轮已确认的 Windows 结果（2026-10-20）
+
+Windows x64 原生构建生成 `PigeonPal-Setup-0.3.1-x64.exe`（122,335,730 字节），内置 Electron 44.9.0、Python 3.12.10 x64 冻结后端、cryptography 和 CA 证书。JavaScript 116 项通过；Python 276 项中 275 项通过、1 项因缺少旁置参考源码跳过。冻结后端通过 39 个资源一致性检查、空账号检查、测试 API 配置加密读写、画像/提醒跨后端进程重启持久化、离线到期和退出检查。
+
+解包的真实 Electron 应用通过 10 项首次启动自检，包括无账号和 Key 时的界面、画像/日历/提醒表单保存、关窗后到期、恢复窗口、重载保存和页面切换；首次界面就绪 810 ms。移除子进程 PATH 中的开发运行时后，隔离窗口仍可启动；另检查了正常应用退出、强制终止其父进程后专属后端随管道 EOF 退出，以及随后全新临时目录启动成功。桌面上已观察到空白安装状态界面与画像表单。
+
+另用正常 `--offline` 启动，在主脚本运行前通过临时 loopback 调试连接将 appData 指向同一个新建临时目录；通过真实表单写入画像、日历和提醒，完全退出后重新启动，三项数据均恢复，日历页面可见，前后两次正常退出码均为 0。此检查移除了子进程 PATH 中的开发运行时，不读取正式用户目录。
+
+安装包、主程序和后端的 Authenticode 状态均为 `NotSigned`。本机是个人电脑，未执行会安装和修改应用注册的 `smoke_windows.ps1`；安装向导、开始菜单、升级/卸载、系统 toast 显示/点击和托盘鼠标操作仍未验证。完整边界及 SHA256 见[验收记录](windows-0.3.1-acceptance.md)和 Release 的 Windows 附件；已有 Mac 文件及校验记录保留。
