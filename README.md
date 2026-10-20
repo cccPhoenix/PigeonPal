@@ -115,4 +115,4 @@ python -m unittest discover -s tests -p 'test_*.py'
 - [通知采集](docs/crawling.md) · [作业采集](docs/homework.md) · [接口约定](docs/interfaces.md)
 - [设计](docs/design.md) · [头像](docs/avatar.md)
 
-提交请新建分支并提 PR，通过检查后合并。**不要提交 API Key、校园凭据、通知数据或个人目录。** 交互设计参考 [DS Bot](https://github.com/Fei2411/DeepSeek-Bot)，保留鸽友自己的实现与校园场景。
+提交请新建分支并提 PR，通过检查后合并。**不要提交 API Key、校园凭据、通知数据或个人目录。** 
