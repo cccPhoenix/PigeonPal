@@ -11,7 +11,7 @@ export function createIconRail({ root, store, onView, onBot, onHomework, onMe, o
   let homeworkUnread = 0
   const badgeHTML = n => (n ? `<span class="badge">${n > 99 ? '99+' : n}</span>` : '')
 
-  const VIEWS = [['notice', '通知', 'bell'], ['homework', '作业', 'book'], ['calendar', '日历', 'calendar']]
+  const VIEWS = [['notice', '通知', 'bell'], ['homework', '作业', 'book'], ['calendar', '日历', 'calendar'], ['user-profile', '用户画像', 'graduate']]
 
   const btn = ({ id, label, iconName, html, current = false, badge = '' }) =>
     `<button class="rail-btn" data-view="${escapeHtml(id)}" aria-label="${escapeHtml(label)}"${current ? ' aria-current="page"' : ''}>

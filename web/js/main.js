@@ -69,8 +69,9 @@ function refreshRecommendations() {
   setTimeout(() => sourcesFeed.refresh(), 800)
 }
 
-function openUserProfile(opener) {
-  showUserProfile({ client: apiClient, opener, onChange: refreshRecommendations })
+function openUserProfile() {
+  closeOverlay()
+  setView('user-profile')
 }
 
 function sourceStateLabel(sourceId) {
@@ -104,14 +105,18 @@ function applyPrefs() {
 }
 
 const noticeView = $('notice')
+let profilePage = null
 
 function setView(view, { acknowledge = true } = {}) {
+  if (view !== 'user-profile' && profilePage) { profilePage.destroy(); profilePage = null }
   app.style.setProperty('--min-notice', `${view === 'calendar' ? CALENDAR_MIN : NOTICE_MIN}px`)
   noticeView.dataset.view = view
-  noticeView.setAttribute('aria-label', view === 'homework' ? '学在浙大作业' : view === 'calendar' ? '日历' : '通知')
+  noticeView.setAttribute('aria-label', view === 'homework' ? '学在浙大作业' : view === 'calendar' ? '日历' : view === 'user-profile' ? '用户画像' : '通知')
   $('pane-calendar').hidden = view !== 'calendar'
+  $('pane-user-profile').hidden = view !== 'user-profile'
   if (view === 'calendar') calendar.render()
-  rail.setView(view)
+  if (view === 'user-profile' && !profilePage) profilePage = showUserProfile({ root: $('pane-user-profile'), client: apiClient, onChange: refreshRecommendations })
+  if (view === 'notice' || view === 'homework') rail.setView(view)
   dock.setView(view)
   if (narrowChat()) toggleChat(false)
   if (view === 'notice' && acknowledge) markNoticeRead()

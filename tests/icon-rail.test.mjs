@@ -23,9 +23,18 @@ test('the icon rail carries the companion, both views and a hover label each', (
   assert.match(root.innerHTML, /data-view="chat"/)
   assert.match(root.innerHTML, /class="rail-lbl">通知</)
   assert.match(root.innerHTML, /class="rail-lbl">日历</)
+  assert.match(root.innerHTML, /data-view="user-profile"[^>]*aria-label="用户画像"/)
   assert.match(root.innerHTML, /data-gaze/)
   assert.match(root.innerHTML, /aria-current="page"/)
   assert.equal(dock.view, 'notice')
+})
+
+test('user profile is a first-class rail view', () => {
+  const { root, dock, seen, listeners } = build(createStore(null))
+  listeners.click({ target: { closest: () => ({ dataset: { view: 'user-profile' } }) } })
+  assert.deepEqual(seen, ['user-profile'])
+  dock.setView('user-profile')
+  assert.match(root.innerHTML, /data-view="user-profile"[^>]*aria-current="page"/)
 })
 
 test('switching views moves the current marker, and the badge updates without a re-render of the mark', () => {

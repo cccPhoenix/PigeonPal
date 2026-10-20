@@ -9,17 +9,17 @@ import { createAIChat, buildChatHistory } from '../web/js/services/chat.js'
 globalThis.document = globalThis.document ?? { addEventListener() {} }
 const { createRail } = await import('../web/js/ui/rail.js')
 const { preferenceLines, preferenceError, openUserProfile } = await import('../web/js/ui/user-profile.js')
-const { closeOverlay } = await import('../web/js/ui/overlays.js')
 const row = (id, recommendation, extra = {}) => ({ id, noticeId: id, sourceId: 'yunfeng', title: `通知 ${id}`, real: true, revision: 'r1', publishedAt: 1, recommendation, ...extra })
 const recommendation = (decision, priority = 0) => ({ state: 'ready', decision, allowPush: decision !== 'not_applicable', priority, reason: '按已确认身份判断', evidence: decision === 'not_applicable' ? ['仅限研究生'] : [], profileVersion: 1, override: null })
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
 
-function profileDialogDocument() {
+function profilePageDocument() {
   const nodes = [], body = { innerHTML: '' }, student = { value: '' }
   const inputs = ['degree', 'admissionYear', 'college', 'major'].map(key => ({ dataset: { fact: key }, value: '' }))
   const preferences = ['interests', 'avoid'].map(key => ({ dataset: { preference: key }, value: '' }))
   const node = () => ({ innerHTML: '', listeners: {}, classList: { add() {}, remove() {} }, remove() {}, append() {}, setAttribute() {},
     addEventListener(name, fn) { this.listeners[name] = fn },
+    removeEventListener(name, fn) { if (this.listeners[name] === fn) delete this.listeners[name] },
     querySelector(selector) {
       if (selector === '[data-profile-body]') return body
       if (selector === '[data-student-number]') return student
@@ -29,30 +29,66 @@ function profileDialogDocument() {
     querySelectorAll(selector) { return selector === '[data-fact]' ? inputs : selector === '[data-preference]' ? preferences : [] },
   })
   const toast = node(), layer = node()
-  return { nodes, body, student, inputs, preferences, document: { addEventListener() {}, createElement() { const value = node(); nodes.push(value); return value }, getElementById(id) { return id === 'toast' ? toast : layer } } }
+  return { nodes, body, student, inputs, preferences, root: node(), document: { addEventListener() {}, createElement() { const value = node(); nodes.push(value); return value }, getElementById(id) { return id === 'toast' ? toast : layer } } }
 }
+
+test('inline profile renders in its host and releases handlers and data on view change', async () => {
+  const originalDocument = globalThis.document
+  const page = profilePageDocument()
+  globalThis.document = page.document
+  try {
+    const mounted = openUserProfile({ root: page.root, client: { userProfile: async () => ({ version: 0, facts: {}, preferences: {} }) } })
+    await tick()
+    assert.equal(page.nodes.length, 0)
+    assert.match(page.root.innerHTML, /id="user-profile-title"/)
+    assert.doesNotMatch(page.root.innerHTML, /profile-hero-icon|profile-eyebrow/)
+    assert.match(page.body.innerHTML, /data-profile-form/)
+    assert.doesNotMatch(page.body.innerHTML, /profile-summary|已确认身份|关注方向<\/span>/)
+    assert.match(page.body.innerHTML, /class="profile-secondary-actions"/)
+    assert.match(page.body.innerHTML, /class="btn primary profile-save"/)
+    mounted.destroy()
+    assert.equal(page.root.innerHTML, '')
+    assert.equal(page.root.listeners.submit, undefined)
+    assert.equal(page.root.listeners.click, undefined)
+  } finally { globalThis.document = originalDocument }
+})
+
+test('read-only profile keeps recovery controls enabled outside its disabled form', async () => {
+  const originalDocument = globalThis.document
+  const page = profilePageDocument()
+  globalThis.document = page.document
+  try {
+    const mounted = openUserProfile({ root: page.root, client: { userProfile: async () => ({ version: 2, facts: {}, preferences: {}, storageError: 'profile_storage_error' }) } })
+    await tick()
+    assert.match(page.body.innerHTML, /<fieldset disabled/)
+    assert.match(page.body.innerHTML, /<\/form><div class="profile-actions">/)
+    assert.match(page.body.innerHTML, /data-profile="clear"/)
+    mounted.destroy()
+  } finally { globalThis.document = originalDocument }
+})
 
 test('a corrupt profile without a snapshot can be explicitly cleared and recreated', async () => {
   const originalDocument = globalThis.document, originalConfirm = globalThis.confirm
-  const page = profileDialogDocument(), calls = []
+  const page = profilePageDocument(), calls = []
   globalThis.document = page.document; globalThis.confirm = () => true
   try {
-    const box = openUserProfile({ client: { userProfile: async () => { throw new ApiError('profile_storage_error') }, clearUserProfile: async body => { calls.push(body); return { version: 1, facts: {}, preferences: {} } } } })
+    const mounted = openUserProfile({ root: page.root, client: { userProfile: async () => { throw new ApiError('profile_storage_error') }, clearUserProfile: async body => { calls.push(body); return { version: 1, facts: {}, preferences: {} } } } })
     await tick()
     assert.match(page.body.innerHTML, /清空并重建画像/)
-    box.listeners.click({ target: { closest() { return { dataset: { profile: 'clear' } } } } })
+    page.root.listeners.click({ target: { closest() { return { dataset: { profile: 'clear' } } } } })
     await tick()
     assert.deepEqual(calls, [{}])
     assert.match(page.body.innerHTML, /data-profile-form/)
-  } finally { closeOverlay(); globalThis.document = originalDocument; globalThis.confirm = originalConfirm }
+    mounted.destroy()
+  } finally { globalThis.document = originalDocument; globalThis.confirm = originalConfirm }
 })
 
 test('student-number inference omits an empty admission fact and clears the transient input', async () => {
   const originalDocument = globalThis.document
-  const page = profileDialogDocument(), calls = []
+  const page = profilePageDocument(), calls = []
   globalThis.document = page.document
   try {
-    const box = openUserProfile({ client: {
+    const mounted = openUserProfile({ root: page.root, client: {
       userProfile: async () => ({ version: 0, facts: {}, preferences: {} }),
       saveUserProfile: async body => {
         calls.push(body)
@@ -61,13 +97,14 @@ test('student-number inference omits an empty admission fact and clears the tran
     } })
     await tick()
     page.student.value = '3250000000'
-    box.listeners.submit({ target: { matches: () => true }, preventDefault() {} })
+    page.root.listeners.submit({ target: { matches: () => true }, preventDefault() {} })
     await tick()
     assert.equal(calls[0].studentNumber, '3250000000')
     assert.equal(calls[0].facts.admissionYear, undefined)
     assert.equal(page.student.value, '')
     assert.match(page.body.innerHTML, /value="2025"/)
-  } finally { closeOverlay(); globalThis.document = originalDocument }
+    mounted.destroy()
+  } finally { globalThis.document = originalDocument }
 })
 
 test('missing, uncertain and failed recommendations preserve notices; only explicit suppression filters', () => {
