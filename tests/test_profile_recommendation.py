@@ -107,6 +107,12 @@ class RecommendationTests(unittest.TestCase):
             self.service.items = {}
             self.assertTrue(self.save(value=data)["allowPush"])
 
+    def test_different_opportunities_cannot_combine_degree_and_year_exclusions(self):
+        data = raw()
+        data["eligibility"]["conditions"].append({"field": "admissionYear", "allowedValues": [2025], "evidence": "仅限2025级"})
+        result = self.save(notice("甲项目报名仅限研究生。乙项目报名仅限2025级。"), data)
+        self.assertTrue(result["allowPush"])
+
     def test_multiple_opportunities_keep_any_matching_alternative(self):
         data = raw()
         data["eligibility"]["conditions"].append({"field": "degree", "allowedValues": ["undergraduate"], "evidence": "仅限本科生"})

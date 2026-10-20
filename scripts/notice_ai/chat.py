@@ -14,7 +14,7 @@ from crawlers.homework_selection import parse_homework_query, homework_query_rep
 from .runtime import LOCAL_ZONE
 from .homework import homework_item
 from .schema import AIError, prepare_notice, redact_text
-from .profile_chat import apply_chat_update, direct_profile_intent, local_student_number, redact_student_number
+from .profile_chat import apply_chat_update, direct_profile_intent, clear_profile_intent, local_student_number, redact_student_number
 
 
 ATTACHED_CONTENT_HEAD = 9000
@@ -159,7 +159,7 @@ class ChatService:
             if self.user_profile is None:
                 raise AIError("profile_storage_error", 503)
             if name == "clear_user_profile":
-                if args or not direct_profile_intent(user_text) or not re.search(r"(?:清空|删除|忘记).{0,8}(?:画像|个人信息)", user_text):
+                if args or not clear_profile_intent(user_text):
                     raise AIError("profile_statement_required", 400)
                 snapshot = self.user_profile.clear(expected_version=profile_version)
             else:
@@ -354,8 +354,10 @@ class ChatService:
             calendar_allowed = bool(re.search(r"日历|日程|待办|行程|计划|记下|安排|calendar|schedule|to.?do", user_context, re.I))
             profile_allowed = bool(re.search(r"叫我|我叫|我是|称呼|名字|nickname", user_context, re.I)) or (not context["nickname"] and len(text.strip()) <= 12)
             available = [definition for definition in TOOLS if definition["function"]["name"] in {"search_notices", "get_notice", "list_reminders"}
-                         or definition["function"]["name"] in {"update_user_profile", "clear_user_profile"}
+                         or definition["function"]["name"] == "update_user_profile"
                             and self.user_profile is not None and direct_profile_intent(text)
+                         or definition["function"]["name"] == "clear_user_profile"
+                            and self.user_profile is not None and clear_profile_intent(text)
                          or definition["function"]["name"] == "set_nickname" and profile_allowed
                          or definition["function"]["name"] == "create_calendar_item" and calendar_allowed
                          or definition["function"]["name"] in {"create_reminder", "update_reminder"} and mutation_allowed]

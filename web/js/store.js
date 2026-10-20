@@ -11,6 +11,7 @@ import { cleanRecommendation } from './services/recommendations.js'
 
 export const STORAGE_KEY = 'pigeonpal.v1'
 // 'notice' is accepted only so legacy stored messages can be migrated into `notices`.
+const redactStudentNumber = text => text.replace(/(?<!\d)3\d{7,12}(?!\d)/g, '[学号已脱敏]')
 const KINDS = ['text', 'notice', 'reminder']
 const NOTICE_CAP = 40
 
@@ -90,7 +91,7 @@ export function hydrate(raw) {
     if (!Array.isArray(list)) continue
     fresh.messages[channel.id] = list.filter(m => m && typeof m.id === 'string' && ['bot', 'user'].includes(m.role) && KINDS.includes(m.kind) && typeof m.text === 'string' && Number.isFinite(m.at))
       .map(m => {
-        const message = { id: m.id, channelId: channel.id, role: m.role, kind: m.kind, text: m.role === 'bot' ? Array.from(m.text).slice(0, 20000).join('') : m.text.slice(0, 4000), at: m.at,
+        const message = { id: m.id, channelId: channel.id, role: m.role, kind: m.kind, text: m.role === 'bot' ? Array.from(m.text).slice(0, 20000).join('') : redactStudentNumber(m.text.slice(0, 4000)), at: m.at,
           ...(typeof m.quoteId === 'string' ? { quoteId: m.quoteId } : {}),
           ...(typeof m.reminderId === 'string' ? { reminderId: m.reminderId } : {}),
           ...(typeof m.noticeId === 'string' ? { noticeId: m.noticeId.slice(0, 1000) } : {}),
@@ -234,6 +235,7 @@ export function createStore(storage = globalThis.localStorage) {
 
     addMessage(channelId, fields, { unread = false } = {}) {
       const message = { id: newId('msg'), channelId, at: Date.now(), kind: 'text', ...fields }
+      if (message.role === 'user' && typeof message.text === 'string') message.text = redactStudentNumber(message.text)
       state.messages[channelId].push(message)
       if (unread) state.unread[channelId] = (state.unread[channelId] ?? 0) + 1
       save()

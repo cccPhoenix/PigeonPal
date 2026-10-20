@@ -22,6 +22,15 @@ def direct_profile_intent(text):
     return bool(re.search(r"我(?:是|就读|在读|在|的(?:学号|学历|学院|专业|入学|兴趣)|喜欢|关注|对|希望|想看|不想|不希望)|(?:请|帮我)?记住|(?:更新|修改|清空|删除|忘记).{0,8}(?:画像|偏好|兴趣)", text))
 
 
+def clear_profile_intent(text):
+    if not direct_profile_intent(text) or re.search(r"不要|别|不想|不希望|不必|不需要|勿|禁止|是否|[?？]|如果|假如|假设", text):
+        return False
+    return bool(re.fullmatch(
+        r"(?:请你?|麻烦你?|我想要?|我要)?(?:帮我|替我)?(?:清空|删除|忘记).{0,8}(?:画像|个人信息)(?:吧|一下|谢谢|[。！!\s])*",
+        text.strip(),
+    ))
+
+
 def local_student_number(text):
     if not direct_profile_intent(text):
         return None

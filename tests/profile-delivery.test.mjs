@@ -55,3 +55,41 @@ test('automatic reminder suppression does not block a manually eligible reminder
   assert.equal(f.sent.length, 1)
   assert.equal(f.sent[0].channelId, 'bot')
 })
+
+test('a notice deferred at dispatch remains retryable when matching finishes', async () => {
+  const f = fixture(); await f.monitor.poll()
+  f.data.items = [{ id: 'yunfeng:race', title: 'Deferred during dispatch', notifyEligible: true, deferPush: false }]
+  const original = f.monitor.api; let reads = 0
+  f.monitor.api = async path => {
+    const result = await original(path)
+    if (path.startsWith('/api/notification-candidates')) {
+      reads += 1
+      return { ...result, items: result.items.map(item => ({ ...item, deferPush: reads === 2 })) }
+    }
+    return result
+  }
+  await f.monitor.poll()
+  assert.equal(f.sent.length, 0)
+  assert.equal(f.state().sources.yunfeng['yunfeng:race'], undefined)
+  await f.monitor.poll(); await f.monitor.poll()
+  assert.equal(f.sent.length, 1)
+})
+
+test('a reminder temporarily deferred at dispatch is not consumed as notified', async () => {
+  const f = fixture(); const stamp = Date.parse('2026-10-20T12:00:00+08:00')
+  f.data.reminders = [{ id: 'race', title: 'Deferred reminder', status: 'pending', channelId: 'bot', deliveredAt: stamp, notifyEligible: true }]
+  const original = f.monitor.api; let reads = 0
+  f.monitor.api = async path => {
+    const result = await original(path)
+    if (path === '/api/reminders') {
+      reads += 1
+      return { reminders: result.reminders.map(row => ({ ...row, notifyEligible: reads !== 2 })) }
+    }
+    return result
+  }
+  await f.monitor.poll()
+  assert.equal(f.sent.length, 0)
+  assert.equal(f.state().reminders.race, undefined)
+  await f.monitor.poll(); await f.monitor.poll()
+  assert.equal(f.sent.length, 1)
+})

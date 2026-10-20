@@ -27,14 +27,16 @@ class NotificationMonitor {
     return {...next.preferences}
   }
   commit(next) { next.preferences=this.state.preferences; this.save(next); this.state=next }
-  async send(rows, title, channelId, refresh=null) {
-    if(!rows.length || !allowedNow(this.state.preferences,channelId,this.now())) return true
+  async send(rows, title, channelId, refresh=null, consumed=new Set()) {
+    if(!rows.length) return true
     const groups=rows.length>3?[rows]:rows.map(row=>[row])
     for(let group of groups) {
       if(refresh) group=await refresh(group)
-      if(!group.length || !allowedNow(this.state.preferences,channelId,this.now())) continue
+      if(!group.length) continue
+      if(!allowedNow(this.state.preferences,channelId,this.now())) { for(const row of group) consumed.add(row.id); continue }
       const chunks=group.length>3?[{title,channelId,body:`有 ${group.length} 条新消息，点击打开鸽友查看。`}]:group.map(row=>({title,channelId,body:Array.from(row.title||'有一条新消息').slice(0,160).join('')}))
-    for(const chunk of chunks) if(!await this.notify(chunk)) return false
+      for(const chunk of chunks) if(!await this.notify(chunk)) return false
+      for(const row of group) consumed.add(row.id)
     }
     return true
   }
@@ -54,10 +56,11 @@ class NotificationMonitor {
         groups.get(channelId).push(r)
       }
       for(const [channelId,rows] of groups) {
+        const consumed=new Set()
         if(await this.send(rows,`${this.state.preferences.botName} · 提醒到时间了`,channelId,async queued=>{
           const fresh=(await this.api('/api/reminders')).reminders
           return queued.filter(old=>fresh.some(r=>r.id===old.id&&r.status==='pending'&&r.notifyEligible!==false&&r.deliveredAt===old.deliveredAt))
-        })) for(const r of rows) next.reminders[r.id]=r.deliveredAt
+        },consumed)) for(const r of rows) if(consumed.has(r.id)) next.reminders[r.id]=r.deliveredAt
       }
       this.commit(next)
       const {sources}=await this.api('/api/sources')
@@ -78,16 +81,20 @@ class NotificationMonitor {
           if(!before) next.sources[source.id]=Object.fromEntries(ids.map(row=>[row.id,true]))
           else {
             const fresh=ids.filter(row=>!before[row.id])
+            const consumed=new Set(fresh.filter(row=>row.notifyEligible===false&&!row.deferPush).map(row=>row.id))
             if(!await this.send(fresh.filter(row=>row.notifyEligible!==false&&!row.deferPush),source.title||'校园新通知',`src-${source.id}`,async queued=>{
               const eligible=new Set(); let nextOffset=0
               do {
                 const page=await this.api(`/api/notification-candidates?source=${source.id}&offset=${nextOffset}`)
-                for(const item of page.items??[]) if(item.notifyEligible!==false&&!item.deferPush) eligible.add(item.id)
+                for(const item of page.items??[]) {
+                  if(item.notifyEligible!==false&&!item.deferPush) eligible.add(item.id)
+                  else if(!item.deferPush) consumed.add(item.id)
+                }
                 nextOffset=page.nextOffset
               } while(Number.isSafeInteger(nextOffset)&&nextOffset>0)
               return queued.filter(row=>eligible.has(row.id))
-            })) continue
-            for(const row of fresh) if(!row.deferPush) before[row.id]=true
+            },consumed)) continue
+            for(const row of fresh) if(consumed.has(row.id)) before[row.id]=true
           }
           this.commit(next)
         } catch { /* One inaccessible source must not block others or reminders. */ }

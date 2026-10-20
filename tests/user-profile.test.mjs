@@ -189,3 +189,15 @@ test('feed rechecks pending unchanged revisions without duplicating ordinary new
   assert.match(preferenceError(['字'.repeat(121)]), /最多 120 字/)
   assert.equal(preferenceError(['字'.repeat(120)]), '')
 })
+
+test('student numbers are redacted before chat storage and while restoring legacy chat', async () => {
+  const number = '3250999999'; let written
+  let complete; const saved = new Promise(resolve => { complete = resolve })
+  const store = createStore({ getItem: () => null, setItem: (_key, value) => { written = value; complete() } })
+  const message = store.addMessage('bot', { role: 'user', text: `我的学号是${number}` })
+  await saved
+  assert.equal(message.text.includes(number), false)
+  assert.equal(written.includes(number), false)
+  const legacy = JSON.parse(written); legacy.messages.bot[0].text = `我的学号是${number}`
+  assert.equal(JSON.stringify(hydrate(legacy)).includes(number), false)
+})

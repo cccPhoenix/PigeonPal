@@ -178,6 +178,7 @@ def _excluded(notice, eligibility, profile):
         return []
     facts = profile["facts"]
     conditions = {"degree": {"values": set(), "evidence": []}, "admissionYear": {"values": set(), "evidence": []}}
+    scopes = {}
     for condition in eligibility["conditions"]:
         quote = condition["evidence"]
         field = condition["field"]
@@ -201,8 +202,13 @@ def _excluded(notice, eligibility, profile):
             return []
         if field == "admissionYear" and re.search(r"[至到—–~～]|及以前|及以后|及以上|及以下|之前|之后|以前|以后|[、，,或及和与].{0,12}(?:级|入学)", sentence):
             return []
+        scopes.setdefault(field, set()).add((left, right))
         conditions[field]["values"].update(allowed)
         conditions[field]["evidence"].append(quote)
+    # Different sentences can describe independent opportunities. Without
+    # explicit opportunity grouping, cross-field conjunction is unproven.
+    if len(scopes) > 1 and len(set().union(*scopes.values())) > 1:
+        return []
     evidence = []
     for field, condition in conditions.items():
         known, allowed = facts.get(field), condition["values"]

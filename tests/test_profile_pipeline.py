@@ -300,6 +300,24 @@ class ProfilePipelineTests(unittest.TestCase):
         self.assertEqual(self.backend.user_profile.model_context()["facts"], {"degree": "undergraduate"})
         self.assertTrue(any(event.get("name") == "user-profile.updated" for event in response["events"]))
 
+    def test_negated_or_question_clear_requests_cannot_clear_or_expose_clear_tool(self):
+        self.undergraduate()
+        before = self.backend.user_profile.snapshot()
+        for index, text in enumerate(["不要清空画像", "我不希望你删除我的画像", "帮我清空画像可以吗？", "如果我清空画像会怎样？"]):
+            with self.subTest(text=text):
+                with self.assertRaises(AIError):
+                    self.backend.chat.execute("clear_user_profile", {}, "bot", "clear-denied", [], user_text=text, profile_version=before["version"])
+                self.backend.chat.respond({"text": text, "requestId": f"clear-denied-{index:03}"})
+                names = {tool["function"]["name"] for tool in self.model.chat_calls[-1]["tools"]}
+                self.assertNotIn("clear_user_profile", names)
+                self.assertEqual(self.backend.user_profile.snapshot(), before)
+
+    def test_explicit_clear_request_still_clears_confirmed_profile(self):
+        self.undergraduate()
+        result = self.backend.chat.execute("clear_user_profile", {}, "bot", "clear-approved", [], user_text="请帮我清空画像", profile_version=1)
+        self.assertTrue(result["ok"])
+        self.assertEqual(self.backend.user_profile.model_context()["facts"], {})
+
     def test_student_number_is_local_only_and_never_persisted_or_forwarded(self):
         number = "3250999999"
         response = self.backend.chat.respond({"text": "我的学号是" + number, "requestId": "student-local-001"})
