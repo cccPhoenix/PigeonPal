@@ -121,9 +121,9 @@ input, textarea, select { font: inherit; color: inherit; }
 .rail-chips .pill.on { background: var(--notice-soft); color: var(--notice-accent); box-shadow: inset 0 0 0 .5px var(--line-2); }
 .rail-chips .ic { width: 15px; height: 15px; }
 .rail-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 4px; margin: 0 -4px; padding: 0 4px; }
-.rail-list .divider { margin: 16px 8px 6px; text-align: left; font-size: 11px; font-weight: 600; letter-spacing: .06em; }
+.rail-list .divider { flex-shrink: 0; margin: 16px 8px 6px; text-align: left; font-size: 11px; font-weight: 600; letter-spacing: .06em; }
 .rail-item {
-  position: relative; display: flex; align-items: flex-start; gap: 12px; width: 100%;
+  position: relative; display: flex; flex-shrink: 0; align-items: flex-start; gap: 12px; width: 100%;
   padding: 12px; border-radius: 14px; text-align: left;
   transition: background-color .15s ease, box-shadow .15s ease;
 }
@@ -166,11 +166,15 @@ input, textarea, select { font: inherit; color: inherit; }
 .homework-detail .notice-body { margin: 0; }
 .homework-detail .btns { margin-top: 4px; }
 .rail-item[aria-current="true"] .rail-sub { padding-right: 52px; }
+.rail-item[data-notice][aria-current="true"] .rail-sub { padding-right: 0; }
+.rail-item[aria-current="true"] .rail-recommendation { padding-right: 64px; }
 .notice:not([data-pane="detail"]) .rail-item { align-items: center; gap: 10px; min-height: 42px; padding: 6px 10px; }
 .notice:not([data-pane="detail"]) .rail-ico { width: 28px; height: 28px; margin-top: 0; border-radius: 8px; }
 .notice:not([data-pane="detail"]) .rail-ico .ic { width: 15px; height: 15px; }
-.notice:not([data-pane="detail"]) .rail-text { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; }
-.notice:not([data-pane="detail"]) .rail-sub { font-size: 11px; }
+.notice:not([data-pane="detail"]) .rail-text { display: grid; grid-template-columns: minmax(0, 1fr) min(40%, 10em); align-items: baseline; gap: 2px 12px; }
+.notice:not([data-pane="detail"]) .rail-title { grid-column: 1; grid-row: 1; }
+.notice:not([data-pane="detail"]) .rail-sub { grid-column: 2; grid-row: 1; font-size: 11px; text-align: right; }
+.notice:not([data-pane="detail"]) .rail-recommendation { grid-column: 1 / -1; grid-row: 2; }
 .rail-detail { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 10px; padding: 2px 2px 12px; }
 .pane-detail.detail-switching { animation: detail-switch-in .32s var(--ease-out); }
 @keyframes detail-switch-in { from { opacity: .72; transform: translateY(14px); } }
@@ -476,7 +480,7 @@ input, textarea, select { font: inherit; color: inherit; }
 .profile-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
 .profile-confirm { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--ink-3); }
 .profile-textarea { height: auto; min-height: 80px; padding: 10px 12px; resize: vertical; }
-.rail-recommendation { font-size: 11px; line-height: 17px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-recommendation { min-width: 0; font-size: 11px; line-height: 17px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-top > .seg { margin-left: auto; }
 @media (max-width: 480px) { .profile-facts { grid-template-columns: minmax(0, 1fr); } }
 .inline { display: flex; align-items: center; gap: 8px; }
