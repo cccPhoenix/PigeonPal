@@ -1,14 +1,14 @@
 name: Windows installer
 on:
   push:
-    branches: ['codex/desktop-preview']
+    branches: ['codex/desktop-release']
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   windows:
     runs-on: windows-2022
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -34,7 +34,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: PigeonPal-Windows-x64
+          retention-days: 30
           path: |
             dist/PigeonPal-Setup-*-x64.exe
             dist/SHA256SUMS.txt
+            dist/desktop-self-check-windows.json
           if-no-files-found: error

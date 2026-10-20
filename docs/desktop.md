@@ -1,4 +1,4 @@
-# Windows 桌面版
+# 桌面版：构建与验收
 
 目标系统：Windows 10/11 x64。安装包自带 Electron、Python 后端和加密依赖，同学无需安装开发工具。每个人在自己的电脑绑定 ZJUAM、填写自己的模型 API key；安装包不包含开发者的账号、Key、通知数据或会话。
 
@@ -41,7 +41,15 @@ npm run dist:win
 python build/smoke_backend.py build/backend-dist/PigeonPalService/PigeonPalService.exe
 ```
 
-产物在 `dist/`。PyInstaller 在当前操作系统冻结 Python，macOS 产物不能作为 Windows exe；Windows workflow 必须真正运行并通过，不能只靠配置文件宣称安装包完成。当前凭据缺少 workflow 权限，GitHub 拒绝推送活动 workflow。因此 `build/windows-workflow.yml` 仅为模板，尚未启用、未运行，Windows exe 仍未生成。取得 workflow 权限后移到 `.github/workflows/windows.yml`，配置对应分支触发，在 Windows runner 编译、离线回归、冻结后端 smoke、静默安装/窗口启动/父进程强制退出 smoke，通过后上传 exe 与 SHA256SUMS。
+产物在 `dist/`。冻结后端和解包应用可安全使用临时数据验收：
+
+```powershell
+python build/smoke_desktop.py dist/win-unpacked/PigeonPal.exe dist/desktop-self-check-windows.json
+```
+
+`build/smoke_windows.ps1` 会静默安装并修改该用户的应用注册，只在一次性 Windows VM / runner 执行。本机非 runner 必须显式传入 `-DisposableMachine`；不要在有个人旧版安装的电脑上无提示运行此安装脚本。
+
+PyInstaller 在当前操作系统冻结 Python，macOS 产物不能作为 Windows exe；Windows workflow 必须真正运行并通过，不能只靠配置文件宣称安装包完成。本版由 Windows 同学在本机运行 `npm ci`、`python -m pip install -r requirements-build.txt`、离线测试与 `npm run dist:win`，再运行下方 smoke。`build/windows-workflow.yml` 保留为未启用模板；当前没有活动 Windows Actions 工作流，不需要为了本机打包补充 workflow 权限。Windows exe 在真实构建、检查成功后再上传，不能把模板或 Mac 检查作为 Windows 产物。
 
 Windows 构建暂未接入发布者代码签名证书；第一版按内部试用包分发，不宣称已签名或已通过系统信誉检查。为同学大规模发布前，需完成下面实际验收。
 
@@ -53,6 +61,28 @@ Windows 交互验收：安装后的开始菜单/图标、首次登录与正常�
 
 ## macOS Apple Silicon
 
-用户新增要求：同时提供 `.dmg`。在 Apple Silicon Mac 上运行 `npm run dist:mac`，产出 `PigeonPal-<版本>-mac-arm64.dmg`，包括本机架构的冻结 Python 后端。此版使用 ad-hoc 本机签名，没有 Apple Developer ID 或公证，不宣称已获 Apple 公证；正式广泛分发仍需开发者签名/公证。Windows 验收仍必须独立进行。
+在 Apple Silicon Mac 上运行 `npm run dist:mac`，产出 `PigeonPal-<版本>-mac-arm64.dmg`，包括本机架构的冻结 Python 后端。此版使用 ad-hoc 本机签名，没有 Apple Developer ID 或公证，不宣称已获 Apple 公证；正式广泛分发仍需开发者签名/公证。Windows 验收仍必须独立进行。
 
 2026-10-18 当前验证：macOS arm64 DMG 已通过 `hdiutil verify`、`codesign --verify --deep --strict` 和冻结后端 smoke（包括外部证书路径无效时使用打包 CA roots），并已从挂载镜像启动实际界面和显示到期提醒。仍未宣称 Windows 安装或实际系统 toast 已通过。
+
+
+## v0.3.1（2026-10-20）发布验收
+
+纳入三栏界面、日历、侧栏用户画像、通知推荐与列表对齐。版本号由 package.json / package-lock.json 统一维护。
+
+`--self-check` 是显式离线验收模式：自动创建空的临时用户目录，忽略任何现有数据路径，既不读取正式账号也不启动校园/模型网络任务。检查界面首次启动、身份和 Key 为空、画像表单、提醒表单、关窗后提醒到期、恢复窗口、重载保存和页面切换，随后退出。此模式关闭系统弹窗，仅确认本地事件生成；不宣称操作系统显示了 toast。
+
+```sh
+python build/smoke_backend.py build/backend-dist/PigeonPalService/PigeonPalService
+python build/smoke_desktop.py 'dist/mac-arm64/PigeonPal.app/Contents/MacOS/PigeonPal' dist/desktop-self-check-mac.json
+```
+
+Windows 由 `build/smoke_windows.ps1` 检查静默安装，并使用同一 smoke_desktop.py 检查安装后的 PigeonPal.exe；强制父进程退出检查额外传入 `--self-check --self-check-hold` 保持隔离窗口，避免自检自动退出造成竞态；脚本对临时目录做严格清理，正式数据不被覆盖。冻结后端检查还核对全部网页资源与当前源码一致、无外部证书路径时的 CA 信任，以及画像/提醒在重启后的持久化。
+
+安装包、SHA256SUMS 与具体平台验收报告放在对应 GitHub Release。没有 Developer ID / Windows 发布者证书；真实校园账号、模型效果、系统免打扰和 Windows 交互弹窗仍由本人在目标环境核对。源码检查和离线计时不代表所有机器与网络环境。
+
+### 本轮已确认的 macOS 结果
+
+Apple Silicon 本机的冻结服务检查通过：39 个网页资源与源码逐字节一致，空账号、加密 API 配置保存/重启读取、画像/提醒持久化、离线到期和正常退出均通过。DMG 校验及应用深层签名结构检查通过；从镜像复制到包含中文和空格的临时安装路径后，应用的 10 项首次启动检查通过。
+
+计时是本机离线样本，不是跨设备性能保证。系统通知权限/实际弹窗、真实校园数据和真实模型仍需使用者验证；Windows 尚未构建，本轮不能标记为通过。
