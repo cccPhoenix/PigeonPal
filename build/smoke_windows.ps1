@@ -1,12 +1,19 @@
+param([switch]$DisposableMachine)
 $ErrorActionPreference = 'Stop'
 $installer = (Get-ChildItem dist/PigeonPal-Setup-*-x64.exe | Select-Object -First 1).FullName
 if (-not $installer) { throw 'Installer missing' }
-$installDir = Join-Path $env:RUNNER_TEMP 'pigeonpal-installed'
+if (-not $env:RUNNER_TEMP -and -not $DisposableMachine) {
+  throw 'Installation smoke changes per-user app registration. Use a disposable Windows machine with -DisposableMachine, or test win-unpacked via smoke_desktop.py.'
+}
+$testRoot = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [System.IO.Path]::GetTempPath() }
+$installDir = Join-Path $testRoot ('pigeonpal installed 验收 ' + [Guid]::NewGuid().ToString('N'))
 $process = Start-Process -FilePath $installer -ArgumentList @('/S', "/D=$installDir") -Wait -PassThru
 if ($process.ExitCode -ne 0) { throw 'Installer failed' }
 $exe = Join-Path $installDir 'PigeonPal.exe'
 if (-not (Test-Path $exe)) { throw 'Installed executable missing' }
-$process = Start-Process -FilePath $exe -ArgumentList '--offline' -PassThru
+python build/smoke_desktop.py $exe dist/desktop-self-check-windows.json
+if ($LASTEXITCODE -ne 0) { throw 'Installed first-run self-check failed' }
+$process = Start-Process -FilePath $exe -ArgumentList @('--self-check', '--self-check-hold') -PassThru
 try {
   $deadline = (Get-Date).AddSeconds(40)
   do {
@@ -22,5 +29,9 @@ try {
   $deadline = (Get-Date).AddSeconds(25)
   while ((Get-Process -Id $children[0].ProcessId -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
   if (Get-Process -Id $children[0].ProcessId -ErrorAction SilentlyContinue) { throw 'Backend survived forced parent exit' }
-} finally { if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue } }
+} finally {
+  if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
+  Get-ChildItem $env:TEMP -Directory -Filter "pigeonpal-self-check-$($process.Id)-*" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item (Join-Path $env:TEMP "pigeonpal-self-check-$($process.Id).json") -ErrorAction SilentlyContinue
+}
 Write-Output 'Installed Windows app: window/backend/forced parent shutdown passed. Interactive toasts still require a signed-in user acceptance check.'
