@@ -24,6 +24,7 @@ def valid_channel(value):
 class RuntimeStore:
     def __init__(self, path):
         self.path, self.backup = path, path.with_name(path.name + ".bak")
+        self.delivery_policy = None
         self.lock = threading.RLock()
         self.state = {"schemaVersion": 1, "reminders": {}, "events": [], "sequence": 0, "receipts": {}}
         self.last_bytes = None
@@ -213,6 +214,19 @@ class RuntimeStore:
         self.commit(mutate, queue_ids=imported)
         return self.reminders()
 
+    def suppress_notice_reminders(self, notice_id):
+        with self.lock:
+            identities = [key for key, row in self.state["reminders"].items()
+                          if row.get("noticeId") == notice_id and row.get("automatic")
+                          and row["status"] == "pending"]
+            if not identities:
+                return
+            def mutate(state):
+                for key in identities:
+                    state["reminders"][key].update(status="cancelled", cancelReason="profile_filter",
+                                                   updatedAt=int(time.time() * 1000))
+            self.commit(mutate, queue_ids=identities)
+
     def schedule_deadline(self, notice, result):
         identity = "rem-ddl-" + str(uuid.uuid5(uuid.NAMESPACE_URL, notice["id"]))
         deadline = parse_time(result.get("deadlineAt"))
@@ -241,7 +255,7 @@ class RuntimeStore:
         with self.lock:
             old = self.state["reminders"].get(identity)
             if old:
-                if not old.get("automatic") or old["status"] == "done" or (old["status"] == "cancelled" and old.get("cancelReason") != "notice_updated"):
+                if not old.get("automatic") or old["status"] == "done" or (old["status"] == "cancelled" and old.get("cancelReason") not in {"notice_updated", "profile_filter"}):
                     return
                 if old.get("deadlineValue") != result["deadlineAt"] or old["status"] == "cancelled":
                     self.update(identity, {"dueAt": int(due.timestamp() * 1000), "status": "pending"}, internal=True)
@@ -291,6 +305,14 @@ class RuntimeStore:
                     row = state['reminders'][identity]
                     if row['status'] != 'pending' or row['deliveredAt'] is not None or row['dueAt'] > now:
                         continue
+                    if row.get('automatic') and self.delivery_policy is not None:
+                        decision = self.delivery_policy(row)
+                        if decision == 'defer':
+                            row.update(dueAt=now + 5000, updatedAt=now)
+                            continue
+                        if decision is False:
+                            row.update(status='cancelled', cancelReason='profile_filter', updatedAt=now)
+                            continue
                     if row.get('automatic') and row.get('policy') == 'homework-six-hour' and row.get('homeworkDeadlineMs', 0) <= now:
                         row.update(status='cancelled', cancelReason='homework_updated', updatedAt=now)
                         continue

@@ -45,6 +45,10 @@ export function apiErrorText(error) {
     network_unavailable: '本机服务暂时不可用，请确认 PigeonPal 已启动。',
     not_found: '本机服务可能仍在运行旧版本，请重启 PigeonPal 后重试。',
     timeout: '请求超时，请稍后重试。',
+    profile_version_conflict: '画像已在其他位置更新，请重新读取后再修改。',
+    profile_storage_error: '本地画像文件读写异常，请检查数据目录或清空后重新填写。',
+    invalid_profile: '画像内容格式不正确，请检查入学年份和偏好内容。',
+    invalid_user_profile: '画像内容格式不正确，请检查入学年份和偏好内容。',
   })[error?.code] || '这次请求没有完成，请稍后重试。'
 }
 
@@ -102,6 +106,10 @@ export function createApiClient(fetcher = globalThis.fetch?.bind(globalThis)) {
     notice: id => request(`/api/notices/detail?noticeId=${encodeURIComponent(id)}`),
     process: noticeId => request('/api/ai/process', { noticeId, force: true }),
     chat: body => request('/api/chat', body, 300_000),
+    userProfile: () => request('/api/user-profile'),
+    saveUserProfile: body => request('/api/user-profile', body),
+    clearUserProfile: body => request('/api/user-profile/reset', body),
+    setRecommendationOverride: (noticeId, decision) => request('/api/recommendations/override', { noticeId, decision }),
     reminders: () => request('/api/reminders'),
     createReminder: body => request('/api/reminders/create', body),
     updateReminder: (id, patch) => request('/api/reminders/update', { id, patch }),

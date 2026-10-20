@@ -9,6 +9,7 @@ import { apiErrorText } from '../services/api.js'
 
 const PAGES = [
   ['bot', '形象与称呼', 'sparkle'],
+  ['user-profile', '用户画像', 'graduate'],
   ['reminders', '提醒', 'bell'],
   ['notify', '主动消息', 'rss'],
   ['auth', '身份认证', 'key'],
@@ -21,6 +22,7 @@ const PAGES = [
 export function openSettings(api, { page = 'bot', opener } = {}) {
   if (page === 'auth') return api.openIdentityAuth?.(opener)
   if (page === 'api') return api.openApiSettings?.(opener)
+  if (page === 'user-profile') return api.openUserProfile?.(opener)
   const { store } = api
   const box = sheet(`<nav class="sheet-nav"><h2>设置</h2>${PAGES.map(([id, label, ic]) => `<button class="nav-item" data-page="${id}">${icon(ic, 16)}${label}</button>`).join('')}</nav>
 <div class="sheet-body"></div>
@@ -75,6 +77,7 @@ ${store.state.channels.filter(c => c.kind === 'source').map(c => `<div class="to
   function show(id) {
     if (id === 'auth') return api.openIdentityAuth?.(opener)
     if (id === 'api') return api.openApiSettings?.(opener)
+    if (id === 'user-profile') return api.openUserProfile?.(opener)
     currentPage = id
     for (const n of box.querySelectorAll('[data-page]')) n.setAttribute('aria-current', String(n.dataset.page === id))
     body.innerHTML = `<section>${pages[id]()}</section>`

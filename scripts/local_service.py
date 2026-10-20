@@ -33,6 +33,8 @@ from notice_ai.runtime import RuntimeStore
 from notice_ai.homework import reconcile_homework
 from notice_ai.schema import AIError
 from notice_ai.service import NoticeProcessor
+from notice_ai.user_profile import UserProfileStore
+from notice_ai.recommendation import RecommendationService
 
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 WEB = ROOT / "web"
@@ -62,9 +64,14 @@ class LocalBackend:
         self.ai_settings = AISettings(auth_dir / "ai")
         self.ai_settings_lock = threading.RLock()
         self.runtime = RuntimeStore(data_dir / "runtime-state.json")
+        self.user_profile = UserProfileStore(data_dir / "user-profile.json")
+        self.recommendations = RecommendationService(self.user_profile, data_dir / "notice-recommendations.json")
         self.ai = NoticeProcessor(self.store, data_dir / "notice-ai.json", self.ai_settings.config,
-                                  on_result=self.runtime.schedule_deadline)
-        self.chat = ChatService(self.ai, self.runtime)
+                                  on_result=self._notice_result, user_profile=self.user_profile,
+                                  recommendations=self.recommendations)
+        self.runtime.delivery_policy = self._reminder_delivery_policy
+        self.chat = ChatService(self.ai, self.runtime, user_profile=self.user_profile,
+                                on_profile_changed=self.profile_changed)
         self.engine = CrawlEngine(self.store, list(SOURCES), auth=self.site_auth, sleep=self._sleep,
                                   client_factory=lambda host, protected, session, **options: (XzzdClient if host == "courses.zju.edu.cn" else SlowClient)(
                                       host, protected, session, sleep=self._sleep, **options),
@@ -100,6 +107,65 @@ class LocalBackend:
                     print("reminders: reminder_worker_error", file=sys.stderr, flush=True)
                 failed = True
             self.stop.wait(10 if failed else 1)
+
+    def _notice_result(self, notice, result):
+        recommendation = self.ai.recommendation(notice)
+        if not recommendation["allowPush"]:
+            self.runtime.suppress_notice_reminders(notice["id"])
+        elif not recommendation.get("deferPush"):
+            self.runtime.schedule_deadline(notice, result)
+
+    def _reminder_allowed(self, row):
+        return self._reminder_delivery_policy(row) is True
+
+    def _reminder_delivery_policy(self, row):
+        if not row.get("automatic") or not row.get("noticeId") or row["noticeId"].startswith("xzzd:"):
+            return True
+        notice = self.store.get_notice(row["noticeId"])
+        if notice is None:
+            return True
+        recommendation = self.ai.recommendation(notice)
+        return "defer" if recommendation.get("deferPush") else recommendation["allowPush"]
+
+    def profile_changed(self):
+        self.ai.prefer_recommendations = True
+        self.ai.wake.set()
+        try:
+            self.ai.reconcile_deadlines()
+        except (AIError, StorageError):
+            self.ai.last_error = "reminder_storage_error"
+
+    def save_user_profile(self, body):
+        result = self.user_profile.update(body)
+        self.profile_changed()
+        return result
+
+    def clear_user_profile(self, body):
+        if set(body) - {"expectedVersion"}:
+            raise AIError("profile_invalid", 400)
+        result = self.user_profile.clear(expected_version=body.get("expectedVersion"))
+        self.profile_changed()
+        return result
+
+    def override_recommendation(self, body):
+        if set(body) != {"noticeId", "decision"} or not isinstance(body["noticeId"], str):
+            raise AIError("invalid_input", 400)
+        notice = self.store.get_notice(body["noticeId"])
+        if notice is None:
+            raise AIError("notice_not_found", 404)
+        self.recommendations.override(notice["id"], body["decision"])
+        self.profile_changed()
+        return self.ai.recommendation(notice)
+
+    def reminders(self):
+        return {"reminders": [{**row, "notifyEligible": self._reminder_allowed(row)} for row in self.runtime.reminders()]}
+
+    def events(self, after):
+        result = self.runtime.events(after)
+        reminders = {row["id"]: row for row in self.runtime.reminders()}
+        result["events"] = [event for event in result["events"]
+                            if self._reminder_allowed(reminders.get(event.get("reminderId"), {}))]
+        return result
 
     def save_ai(self, body):
         return self.change_ai(self.ai_settings.save, body)
@@ -147,6 +213,8 @@ class LocalBackend:
                 items[-1]["homework"] = row["homework"]
             analysis = self.ai.analysis(row)
             items[-1]["analysis"] = analysis
+            recommendation = self.ai.recommendation(row)
+            items[-1]["recommendation"] = recommendation
             visible = {key: items[-1][key] for key in ("title", "url", "publishedAt", "state", "fetchable", "qualityFlags")}
             if "homework" in row:
                 visible["homework"] = row["homework"]
@@ -154,23 +222,31 @@ class LocalBackend:
             digest = hashlib.sha256(json.dumps({"metadata": visible, "result": analysis.get("result"),
                                                "analysisState": analysis.get("state"), "analysisError": analysis.get("error")},
                                                sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
-            items[-1]["revision"] = f"{row['version']}:{row['contentHash']}:{digest}"
+            personal = hashlib.sha256(json.dumps(recommendation, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:12]
+            items[-1]["revision"] = f"{row['version']}:{row['contentHash']}:{digest}:{personal}"
         return {"items": items, "total": len(rows), "nextOffset": offset + limit if offset + limit < len(rows) else None}
 
     def notice_detail(self, notice_id):
         row = self.store.get_notice(notice_id)
         if row is None:
             raise AIError("notice_not_found", 404)
-        return {**row, "analysis": self.ai.analysis(row)}
+        return {**row, "analysis": self.ai.analysis(row), "recommendation": self.ai.recommendation(row)}
 
     def notification_candidates(self, source_id, offset=0):
         """Complete ingestion identity index, independent of the bounded UI view."""
         if source_id not in SOURCES or offset < 0:
             raise AIError("invalid_input", 400)
         rows = self.store.export_items(source_id)
-        items = [{"id": row["id"], "title": row["title"], "notifyEligible": source_id != "xzzd" or (
-            is_current_homework(row, time.time()) and row.get("homework", {}).get("submissionStatus") != "submitted"
-        )} for row in rows[offset:offset + 100]]
+        items = []
+        for row in rows[offset:offset + 100]:
+            if source_id == "xzzd":
+                eligible = is_current_homework(row, time.time()) and row.get("homework", {}).get("submissionStatus") != "submitted"
+                deferred = False
+            else:
+                recommendation = self.ai.recommendation(row)
+                eligible, deferred = recommendation["allowPush"], recommendation.get("deferPush", False)
+            items.append({"id": row["id"], "title": row["title"], "notifyEligible": eligible,
+                          "deferPush": deferred})
         return {"items": items, "nextOffset": offset + 100 if offset + 100 < len(rows) else None}
 
     def _sleep(self, seconds):
@@ -336,6 +412,8 @@ def handler_for(backend):
                         return
                     if path == "/api/auth/status":
                         self._json(200, backend.auth.status())
+                    elif path == "/api/user-profile":
+                        self._json(200, backend.user_profile.snapshot())
                     elif path == "/api/sources":
                         self._json(200, backend.source_status())
                     elif path == "/api/ai/settings":
@@ -357,7 +435,7 @@ def handler_for(backend):
                             raise AIError("invalid_input", 400) from None
                         self._json(200, backend.notification_candidates(query.get("source", [""])[0], offset))
                     elif path == "/api/reminders":
-                        self._json(200, {"reminders": backend.runtime.reminders()})
+                        self._json(200, backend.reminders())
                     elif path == "/api/events":
                         try:
                             after = int(query.get("after", ["0"])[0])
@@ -365,7 +443,7 @@ def handler_for(backend):
                                 raise ValueError
                         except ValueError:
                             raise AIError("invalid_input", 400) from None
-                        self._json(200, backend.runtime.events(after))
+                        self._json(200, backend.events(after))
                     else:
                         self._json(404, {"error": "not_found"})
                 elif self._allowed(token=False):
@@ -404,6 +482,14 @@ def handler_for(backend):
                     result = backend.auth.start_login(body.get("username"), body.get("password"), body.get("requestId"))
                     body.clear()
                     self._json(202, result)
+                elif path == "/api/user-profile":
+                    result = backend.save_user_profile(body)
+                    body.clear()
+                    self._json(200, result)
+                elif path == "/api/user-profile/reset":
+                    self._json(200, backend.clear_user_profile(body))
+                elif path == "/api/recommendations/override":
+                    self._json(200, backend.override_recommendation(body))
                 elif path == "/api/auth/confirm":
                     self._json(200, backend.auth.confirm(body.get("requestId")))
                 elif path == "/api/auth/cancel":

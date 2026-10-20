@@ -132,7 +132,8 @@ class HomeworkDeadlineTests(unittest.TestCase):
             rows.append(row)
         backend = LocalBackend.__new__(LocalBackend)
         backend.store = SimpleNamespace(export_items=lambda source: rows)
-        backend.ai = SimpleNamespace(analysis=lambda row: {'state': 'local_only'})
+        backend.ai = SimpleNamespace(analysis=lambda row: {'state': 'local_only'},
+                                     recommendation=lambda row: {'decision': 'uncertain', 'allowPush': True})
         first, second = backend.notices('xzzd', limit=2), backend.notices('xzzd', limit=2, offset=2)
         self.assertEqual([row['id'] for row in first['items'] + second['items']], ['xzzd:1', 'xzzd:3', 'xzzd:4'])
 

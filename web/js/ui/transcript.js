@@ -3,6 +3,7 @@ import { icon } from './icons.js'
 import { escapeHtml, richText, plain, clock, whenLabel, personalize } from './format.js'
 import { eventPhrase, NOTICE_CATEGORIES } from '../services/sources.js'
 import { isHomework, isHomeworkCard, orderHomeworkMessages, reorderHomeworkNodes } from '../services/homework.js'
+import { noticeKept } from '../services/recommendations.js'
 
 const GROUP_GAP = 5 * 60_000
 const DIVIDER_GAP = 30 * 60_000
@@ -16,6 +17,7 @@ export function createTranscript({ root, jump, store, onAction }) {
   let unseen = 0
 
   const profile = () => store.state.profile
+  const visible = message => !message.noticeHeadsUp || !message.noticeId || noticeKept(store.notice(message.noticeId))
   const mark = (opts = {}) => markHTML({ look: profile().look, image: profile().look === 'image' ? profile().image : null, label: profile().botName, size: 36, ...opts })
   const nearBottom = () => root.scrollHeight - root.scrollTop - root.clientHeight < 96
   const toBottom = (smooth = false) => root.scrollTo({ top: root.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
@@ -89,7 +91,7 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
     typingRow = null
     unseen = 0
     jump.hidden = true
-    const list = orderHomeworkMessages(store.state.messages[id] ?? [])
+    const list = orderHomeworkMessages((store.state.messages[id] ?? []).filter(visible))
     let html = ''
     let prev = null
     list.forEach(m => {
@@ -107,7 +109,7 @@ ${user ? '' : `<div class="gutter">${first ? mark({ live, state: 'idle' }) : ''}
   }
 
   function append(m) {
-    if (m.channelId !== channelId || !inner) return
+    if (m.channelId !== channelId || !inner || !visible(m)) return
     inner.querySelector('.empty')?.remove()
     const stick = nearBottom() || m.role === 'user'
     const rows = inner.querySelectorAll('.row')
