@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -272,7 +273,9 @@ class HomeworkIntegrationTests(unittest.TestCase):
         self.assertEqual(client.paths, [])
         self.assertEqual(self.store.export_items("xzzd"), [])
 
-    def test_local_api_exposes_homework_and_revision_without_model_processing(self):
+    # Keep the synthetic deadline current regardless of the machine's date.
+    @patch("crawlers.homework_selection.time.time", return_value=1000.0)
+    def test_local_api_exposes_homework_and_revision_without_model_processing(self, _clock):
         root = Path(self.temp.name)
         backend = LocalBackend(root / "api-data", root / "empty-test-auth", start_worker=False)
         self.addCleanup(backend.close)

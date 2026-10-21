@@ -69,7 +69,8 @@ else {
       } catch {return new Response('本地服务暂时不可用，请重新打开鸽友。',{status:503})}
     })
     const image=nativeImage.createFromPath(join(root,'web','assets','icon.png'))
-    win=new BrowserWindow({width:1240,height:820,minWidth:760,minHeight:540,title:'鸽友 PigeonPal',icon:image,show:false,autoHideMenuBar:true,
+    const windowIcon=process.platform==='win32'?nativeImage.createFromPath(join(root,'web','assets','icon-windows.png')):image
+    win=new BrowserWindow({width:1240,height:820,minWidth:760,minHeight:540,title:'鸽友 PigeonPal',icon:windowIcon,show:false,autoHideMenuBar:true,
       webPreferences:{preload:join(__dirname,'preload.cjs'),session:desktopSession,nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true,backgroundThrottling:false}})
     Menu.setApplicationMenu(null)
     win.on('close',event=>{if(!quitting){event.preventDefault();win.hide()}})

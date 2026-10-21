@@ -9,6 +9,7 @@ directories:
 files:
   - desktop/**/*.cjs
   - web/assets/icon.png
+  - web/assets/icon-windows.png
   - package.json
 extraResources:
   - from: build/backend-dist/PigeonPalService
@@ -17,7 +18,7 @@ win:
   target:
     - target: nsis
       arch: [x64]
-  icon: build/icon.ico
+  icon: build/windows-icon.ico
 nsis:
   oneClick: false
   perMachine: false
