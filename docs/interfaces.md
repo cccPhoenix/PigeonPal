@@ -58,6 +58,10 @@ client.events(cursor)
 
 `web/js/store.js` 用 localStorage（`pigeonpal.v1`）保存聊天、界面偏好、通知去重标记及事件游标。提醒权威数据在本机 `runtime-state.json`；旧版浏览器提醒首次连接时按 ID 导入。原通知在 `crawler-state.json`，整理缓存在 `notice-ai.json`。认证与 API 密钥均在仓库外的独立加密目录，不进入 localStorage 或通知导出。
 
+通知的本机管理状态保存在 `noticeMeta[noticeId]`：`starred` 为星标，`deletedAt` 为移入回收站的毫秒时间，`unread/channelId` 为通知级未读标记。采集与模型更新只替换原通知，不覆盖这些用户状态；删除不删除采集原文，恢复保留星标且不重新增加未读。已创建的提醒与日历事项独立保留。通知缓存每来源保留最近 40 条普通通知，星标、回收站和未读通知额外保留，确保旧条目仍可恢复。旧版本按频道累计的未读数首次读取时迁移为已缓存通知的独立标记，清理修订重复计数；侧栏与来源分类共用 `noticeUnreadCount`，读取某来源清除该来源，读取全部清除所有来源，作业和聊天单独计数。
+
+`noticeSort` 保存 `recommended/newest/oldest/type`，推荐范围与排序相互独立。星标始终置顶并保留在推荐范围内；类型按 `NOTICE_CATEGORIES` 的显示顺序分组，同类按发布日期从新到旧排列；没有发布日期的条目在时间排序中放在末尾，不使用采集日期代替。回收站独立于通知列表与普通搜索，支持来源筛选和逐条恢复，不提供自动清空或永久删除。
+
 ## 5. HTTP 接口
 
 先 `GET /api/bootstrap` 取得 `csrfToken`，其余 API 必须带 `X-PigeonPal-Token`。POST 要求同源 `Origin` 和 `Content-Type: application/json`；前端客户端自动处理。服务不开放跨域访问，不记录请求正文。错误只返回固定错误码。

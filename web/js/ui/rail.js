@@ -4,7 +4,8 @@ import { NOTICE_CATEGORIES, NOTICE_DRAG_TYPE, isAttachable } from '../services/s
 import { apiErrorText } from '../services/api.js'
 import { toast } from './overlays.js'
 import { cleanHomework, homeworkDetailHTML, homeworkTime, isHomeworkCard } from '../services/homework.js'
-import { cleanRecommendation, recommendationLabel, evidenceText, orderRecommended } from '../services/recommendations.js'
+import { cleanRecommendation, recommendationLabel, evidenceText } from '../services/recommendations.js'
+import { NOTICE_SORTS, noticeChannels, noticeUnreadCount, noticeDeleted, noticeCategory, selectNotices } from '../services/notice-list.js'
 
 // The notice view: crawled notices, typeset rather than chatted. The list pane groups by
 // day and filters by source; the detail pane is a key/value table fed by the list plus the
@@ -26,6 +27,7 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
   let view = 'notice'
   let filter = null
   let recommendationMode = 'recommended'
+  let trash = false
   let selected = null
   let selectedHomework = null
   let homeworkCourse = null
@@ -47,26 +49,29 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
 
   function chipsHTML() {
     const chip = (src, label, on, unread) => `<button class="pill${on ? ' on' : ''}" data-rail="filter" data-src="${escapeHtml(src)}" aria-pressed="${on}">${label}${unread ? `<span class="badge">${unread > 99 ? '99+' : unread}</span>` : ''}</button>`
-    const sources = store.state.channels.filter(c => c.kind === 'source' && c.sourceId !== 'xzzd')
-    const total = sources.reduce((sum, c) => sum + (store.state.unread[c.id] ?? 0), 0)
+    const sources = noticeChannels(store.state)
+    const total = trash ? 0 : noticeUnreadCount(store.state)
     return [chip('', '全部', !filter, total),
       ...sources.map(c => chip(
-        c.sourceId, `${sourceIcon(c.sourceId)}${escapeHtml(c.title)}`, filter === c.sourceId, store.state.unread[c.id] ?? 0,
+        c.sourceId, `${sourceIcon(c.sourceId)}${escapeHtml(c.title)}`, filter === c.sourceId, trash ? 0 : noticeUnreadCount(store.state, c.sourceId),
       ))].join('')
   }
 
   function itemHTML(n) {
     const c = channelOf(n)
     const current = selected === n.noticeId
-    return `<button class="rail-item" data-notice="${escapeHtml(n.noticeId)}" aria-current="${current}"${isAttachable(n) ? ' draggable="true"' : ''}>
+    const starred = store.state.noticeMeta[n.noticeId]?.starred === true
+    return `<div class="notice-row${starred ? ' is-starred' : ''}"><button class="rail-item" data-notice="${escapeHtml(n.noticeId)}" aria-current="${current}"${!trash && isAttachable(n) ? ' draggable="true"' : ''}>
   <span class="rail-ico" aria-hidden="true">${sourceIcon(n.sourceId)}</span>
   <span class="rail-text">
-    <span class="rail-title">${escapeHtml(n.title)}</span>
-    <span class="rail-sub">${escapeHtml(c?.title ?? '')} · ${escapeHtml(shortTime(n.publishedAt))}</span>
+    <span class="rail-title">${starred ? `<span class="notice-star-mark" aria-label="已星标">${icon('star', 12)}</span>` : ''}${escapeHtml(n.title)}</span>
+    <span class="rail-sub">${escapeHtml(c?.title ?? '')} · ${escapeHtml(n.publishedAt > 0 ? shortTime(n.publishedAt) : '发布日期未知')}</span>
     <span class="rail-recommendation" title="${escapeHtml(n.recommendation?.reason || '')}">${escapeHtml(recommendationLabel(n.recommendation))}</span>
   </span>
   ${current ? '<span class="rail-current">正在查看</span>' : ''}
-</button>`
+</button><div class="notice-row-actions">
+  ${trash ? `<button class="icon-btn flat" data-notice-action="restore" data-id="${escapeHtml(n.noticeId)}" aria-label="恢复通知：${escapeHtml(n.title)}" title="恢复通知">${icon('restore', 16)}</button>` : `<button class="icon-btn flat notice-star${starred ? ' on' : ''}" data-notice-action="star" data-id="${escapeHtml(n.noticeId)}" aria-label="${starred ? '取消星标' : '星标置顶'}：${escapeHtml(n.title)}" aria-pressed="${starred}" title="${starred ? '取消星标' : '星标置顶'}">${icon('star', 16)}</button><button class="icon-btn flat" data-notice-action="trash" data-id="${escapeHtml(n.noticeId)}" aria-label="移入回收站：${escapeHtml(n.title)}" title="移入回收站">${icon('trash', 16)}</button>`}
+</div></div>`
   }
 
   const homeworkCards = () => (store.state.messages['src-xzzd'] || []).filter(isHomeworkCard)
@@ -137,22 +142,25 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
 
   function renderList() {
     if (view === 'homework') return renderHomeworkList()
-    let all = Object.values(store.state.notices)
-      .filter(n => !filter || n.sourceId === filter)
-      .sort((a, b) => (b.publishedAt ?? 0) - (a.publishedAt ?? 0))
-    if (recommendationMode === 'recommended') all = orderRecommended(all)
+    const all = selectNotices(store.state, { sourceId: filter, mode: recommendationMode, trash })
     const rows = []
-    let lastDay = null
+    let lastGroup = null
     for (const n of all) {
-      const day = dayLabel(n.publishedAt ?? Date.now())
-      if (recommendationMode === 'all' && day !== lastDay) { rows.push(`<div class="divider">${escapeHtml(day)}</div>`); lastDay = day }
+      const starred = store.state.noticeMeta[n.noticeId]?.starred
+      const group = starred ? '星标置顶' : store.state.noticeSort === 'type' ? NOTICE_CATEGORIES[noticeCategory(n)]
+        : ['newest', 'oldest'].includes(store.state.noticeSort) ? (n.publishedAt > 0 ? dayLabel(n.publishedAt) : '发布日期未知') : '按相关性排序 · 可能有用的继续保留'
+      if (group !== lastGroup) { rows.push(`<div class="divider">${escapeHtml(group)}</div>`); lastGroup = group }
       rows.push(itemHTML(n))
     }
+    if (selected && !all.some(n => n.noticeId === selected)) { selected = null; renderDetail(); syncPaneAttr() }
+    const trashCount = Object.keys(store.state.noticeMeta).filter(id => noticeDeleted(store.state, id) && store.notice(id)).length
+    const options = Object.entries(NOTICE_SORTS).map(([key, label]) => `<option value="${key}"${store.state.noticeSort === key ? ' selected' : ''}>${label}</option>`).join('')
     repaint(listRoot, `<div class="rail-top">
-  <span class="rail-head">通知</span><div class="seg" aria-label="通知推荐范围"><button data-rail="recommendation-mode" data-mode="recommended" aria-pressed="${recommendationMode === 'recommended'}">推荐</button><button data-rail="recommendation-mode" data-mode="all" aria-pressed="${recommendationMode === 'all'}">全部通知</button></div>
+  <span class="rail-head">${trash ? '通知回收站' : '通知'}</span><button class="pill" data-rail="trash" aria-pressed="${trash}">${icon(trash ? 'chevron' : 'trash', 15)}${trash ? '返回通知' : `回收站${trashCount ? ` · ${trashCount}` : ''}`}</button>
 </div>
+<div class="notice-controls">${trash ? '<span class="muted">删除的通知可在此恢复</span>' : `<div class="seg" aria-label="通知推荐范围"><button data-rail="recommendation-mode" data-mode="recommended" aria-pressed="${recommendationMode === 'recommended'}">推荐</button><button data-rail="recommendation-mode" data-mode="all" aria-pressed="${recommendationMode === 'all'}">全部通知</button></div>`}<label class="notice-sort">排序<select data-rail="sort" aria-label="通知排序">${options}</select></label></div>
 <div class="chips rail-chips">${chipsHTML()}</div>
-<div class="rail-list pane-scroll">${recommendationMode === 'recommended' && rows.length ? '<div class="divider">按相关性排序 · 可能有用的继续保留</div>' : ''}${rows.join('') || `<div class="empty">${recommendationMode === 'recommended' ? '暂时没有推荐，可以切换到「全部通知」查看原始通知。' : filter ? '这个来源还没有通知' : '还没有通知，爬虫每五分钟看一次'}</div>`}</div>`)
+<div class="rail-list pane-scroll">${rows.join('') || `<div class="empty">${trash ? filter ? '这个来源的回收站为空' : '回收站为空' : recommendationMode === 'recommended' ? '暂时没有推荐，可以切换到「全部通知」查看原始通知。' : filter ? '这个来源还没有通知' : '还没有通知，爬虫每五分钟看一次'}</div>`}</div>`)
   }
 
   function detailRows(n, cached) {
@@ -217,11 +225,12 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
     ${body}
   </div>
   <div class="pills under">
+    ${trash ? `<button class="pill" data-act="restore">${icon('restore', 15)}恢复通知</button>` : `<button class="pill${store.state.noticeMeta[n.noticeId]?.starred ? ' on' : ''}" data-act="star" aria-pressed="${Boolean(store.state.noticeMeta[n.noticeId]?.starred)}">${icon('star', 15)}${store.state.noticeMeta[n.noticeId]?.starred ? '取消星标' : '星标置顶'}</button><button class="pill" data-act="trash">${icon('trash', 15)}移入回收站</button>`}
     ${n.url ? `<a class="pill" href="${safeHref(n.url)}" target="_blank" rel="noopener">${icon('link', 15)}打开原网页</a>` : ''}
-    <button class="pill${reminder ? ' on' : ''}" data-act="remind">${icon('bell', 15)}${reminder ? `已提醒 · ${escapeHtml(whenLabel(reminder.dueAt))}` : '提醒我'}</button>
-    ${onAttach ? `<button class="pill" data-act="attach">${icon('attach', 15)}添加到对话</button>` : ''}
-    ${canReprocess ? `<button class="pill" data-act="reprocess">${icon('sparkle', 15)}重新整理</button>` : ''}
-    ${n.recommendation?.override === 'keep' ? `<button class="pill" data-act="recommendation-auto">恢复自动判断</button>` : n.recommendation?.allowPush === false ? `<button class="pill" data-act="recommendation-keep">${icon('check', 15)}仍然推荐</button>` : ''}
+    ${!trash ? `<button class="pill${reminder ? ' on' : ''}" data-act="remind">${icon('bell', 15)}${reminder ? `已提醒 · ${escapeHtml(whenLabel(reminder.dueAt))}` : '提醒我'}</button>` : ''}
+    ${!trash && onAttach ? `<button class="pill" data-act="attach">${icon('attach', 15)}添加到对话</button>` : ''}
+    ${!trash && canReprocess ? `<button class="pill" data-act="reprocess">${icon('sparkle', 15)}重新整理</button>` : ''}
+    ${trash ? '' : n.recommendation?.override === 'keep' ? `<button class="pill" data-act="recommendation-auto">恢复自动判断</button>` : n.recommendation?.allowPush === false ? `<button class="pill" data-act="recommendation-keep">${icon('check', 15)}仍然推荐</button>` : ''}
   </div>
 </div>`)
   }
@@ -248,7 +257,7 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
     filter = sourceId || null
     renderList()
     syncPaneAttr()
-    onRead?.(filter)
+    if (!trash) onRead?.(filter)
   }
 
   function openNotice(noticeId) {
@@ -257,7 +266,7 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
     const switching = Boolean(selected && selected !== noticeId)
     selected = noticeId
     renderList()
-    onRead?.(n.sourceId)
+    if (!trash) onRead?.(n.sourceId)
     if (n.real && !detailCache.has(cacheKey(n))) {
       renderDetail()
       client.notice(n.noticeId)
@@ -309,6 +318,7 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
     const n = store.notice(noticeId)
     if (!n) return
     filter = n.sourceId || null
+    trash = noticeDeleted(store.state, noticeId)
     if (n.recommendation?.allowPush === false) recommendationMode = 'all'
     renderList()
     openNotice(noticeId)
@@ -323,6 +333,20 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
     }
   }
 
+  function noticeAction(action, id) {
+    if (!store.notice(id)) return
+    if (action === 'star') store.setNoticeStarred(id, !store.state.noticeMeta[id]?.starred)
+    if (action === 'trash') { store.trashNotice(id); toast('已移入回收站，可在回收站恢复') }
+    if (action === 'restore') { store.restoreNotice(id); toast('已恢复通知') }
+  }
+
+  function setTrash(value) {
+    trash = Boolean(value)
+    filter = null
+    selected = null
+    render()
+  }
+
   function patchRemindPill(reminder) {
     if (view !== 'notice' || !selected || (reminder && reminder.noticeId !== selected)) return
     const pill = detailRoot.querySelector?.('.rail-detail [data-act="remind"]')
@@ -334,6 +358,8 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
 
   function bind(root) {
     root.addEventListener('click', e => {
+      const action = e.target.closest?.('[data-notice-action]')
+      if (view === 'notice' && action) return noticeAction(action.dataset.noticeAction, action.dataset.id)
       if (view === 'homework') {
         const toggle = e.target.closest?.('[data-rail="homework-toggle"]')
         if (toggle) {
@@ -360,6 +386,7 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
       if (chip) return setFilter(chip.dataset.src || null)
       const mode = e.target.closest?.('[data-rail="recommendation-mode"]')
       if (mode) { recommendationMode = mode.dataset.mode === 'all' ? 'all' : 'recommended'; return renderList() }
+      if (e.target.closest?.('[data-rail="trash"]')) return setTrash(!trash)
       if (e.target.closest?.('[data-rail="back"]')) return back()
       const act = e.target.closest?.('[data-act]')
       if (!act) return
@@ -369,6 +396,7 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
         return
       }
       const n = selected ? store.notice(selected) : null
+      if (n && ['star', 'trash', 'restore'].includes(act.dataset.act)) return noticeAction(act.dataset.act, n.noticeId)
       if (act.dataset.act === 'remind' && n) return onRemind?.(n, act)
       if (act.dataset.act === 'attach' && n) return onAttach?.(n)
       if (act.dataset.act === 'retry' && n) { detailCache.delete(cacheKey(n)); return openNotice(n.noticeId) }
@@ -390,6 +418,12 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
 
   bind(listRoot)
   bind(detailRoot)
+  store.on('notice-meta', () => { if (view === 'notice') render() })
+  listRoot.addEventListener('change', e => {
+    if (view !== 'notice' || !e.target.closest?.('[data-rail="sort"]')) return
+    store.setNoticeSort(e.target.value)
+    listRoot.querySelector?.('[data-rail="sort"]')?.focus()
+  })
 
   listRoot.addEventListener('keydown', e => {
     if (view !== 'homework') return
@@ -426,7 +460,7 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
   listRoot.addEventListener('dragstart', e => {
     const row = e.target.closest?.('[data-notice]')
     const n = row ? store.notice(row.dataset.notice) : null
-    if (!n || !isAttachable(n)) { e.preventDefault?.(); return }
+    if (!n || noticeDeleted(store.state, n.noticeId) || !isAttachable(n)) { e.preventDefault?.(); return }
     const payload = JSON.stringify({ noticeId: n.noticeId, title: n.title })
     e.dataTransfer?.setData(NOTICE_DRAG_TYPE, payload)
     e.dataTransfer?.setData('text/plain', n.title)
@@ -434,8 +468,9 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
   })
 
   return {
-    render, renderList, renderDetail, setView, setFilter, openNotice, openHomework, back, reveal, onNotice, patchRemindPill,
+    render, renderList, renderDetail, setView, setFilter, setTrash, openNotice, openHomework, back, reveal, onNotice, patchRemindPill,
     get filter() { return filter },
+    get trash() { return trash },
     get homeworkCourse() { return homeworkCourse },
     get selected() { return view === 'homework' ? selectedHomework : selected },
   }

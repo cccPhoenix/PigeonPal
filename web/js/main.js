@@ -23,6 +23,7 @@ import { createApiClient, apiErrorText } from './services/api.js'
 import { openApiSettings as showApiSettings } from './ui/api-settings.js'
 import { openUserProfile as showUserProfile } from './ui/user-profile.js'
 import { noticePushable, deliveryTransition } from './services/recommendations.js'
+import { noticeUnreadCount, noticeDeleted } from './services/notice-list.js'
 import { popover, dialog, closeOverlay, overlayFor, toast } from './ui/overlays.js'
 import { icon } from './ui/icons.js'
 import { escapeHtml, plain, whenLabel, clock, personalize } from './ui/format.js'
@@ -119,7 +120,7 @@ function setView(view, { acknowledge = true } = {}) {
   if (view === 'notice' || view === 'homework') rail.setView(view)
   dock.setView(view)
   if (narrowChat()) toggleChat(false)
-  if (view === 'notice' && acknowledge) markNoticeRead()
+  if (view === 'notice' && acknowledge && !rail.trash) markNoticeRead(rail.filter)
   if (view === 'homework' && acknowledge) store.markRead('src-xzzd')
 }
 
@@ -144,13 +145,8 @@ const rail = createRail({
 const calendar = createCalendar({ root: $('pane-calendar'), store, onAdd: openNewCalendarItem, onOpen: openCalendarItem })
 
 const narrowChat = () => window.matchMedia('(max-width: 1099px)').matches
-const noticeChannels = () => store.state.channels.filter(c => c.kind === 'source' && c.sourceId !== 'xzzd')
-const noticeUnread = () => noticeChannels().reduce((sum, c) => sum + (store.state.unread[c.id] ?? 0), 0)
-
 function markNoticeRead(sourceId = null) {
-  for (const channel of noticeChannels()) {
-    if (!sourceId || channel.sourceId === sourceId) store.markRead(channel.id)
-  }
+  store.markNoticesRead(sourceId)
 }
 
 createSplitter({
@@ -167,7 +163,7 @@ function toggleChat(open = app.dataset.chat !== 'open') {
 $('chat-scrim').addEventListener('click', () => toggleChat(false))
 
 function syncBadges() {
-  dock.setUnread(noticeUnread())
+  dock.setUnread(noticeUnreadCount(store.state))
   dock.setChatUnread(store.state.unread.bot ?? 0)
   dock.setHomeworkUnread(store.state.unread['src-xzzd'] ?? 0)
 }
@@ -591,7 +587,7 @@ function openSearch(anchor) {
   const draw = q => {
     const all = Object.values(store.state.messages).flat()
     const hits = q ? all.filter(m => plain(m.text, store.state.profile).includes(q)).slice(-20).reverse() : []
-    const notices = q ? Object.values(store.state.notices).filter(n => n.title.includes(q)).slice(0, 20) : []
+    const notices = q ? Object.values(store.state.notices).filter(n => !noticeDeleted(store.state, n.noticeId) && n.title.includes(q)).slice(0, 20) : []
     const clip = 'style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"'
     results.innerHTML = [
       ...notices.map(n => { const c = store.state.channels.find(x => x.sourceId === n.sourceId); return `<button class="mi" data-notice="${escapeHtml(n.noticeId)}"><span>${escapeHtml(c?.emoji ?? '🔔')}</span><span ${clip}>${escapeHtml(n.title)}</span></button>` }),
@@ -674,7 +670,7 @@ function receiveNotice(channelId, item, alreadySeen = false) {
   const transition = deliveryTransition(previous, item)
   store.upsertNotice(channelId, item, { unread: transition.deliver })
   if (transition.state !== previous) store.setNoticeDelivery(item.noticeId, transition.state)
-  if (!transition.deliver || !noticePushable(item)) return
+  if (!transition.deliver || !noticePushable(item) || noticeDeleted(store.state, item.noticeId)) return
   const text = headsUp(item, store.channel(channelId).title)
   store.addMessage('bot', { role: 'bot', kind: 'text', text, noticeId: item.noticeId, noticeHeadsUp: true }, { unread: active !== 'bot' })
   announce(channelId, store.channel(channelId).title, plain(text, store.state.profile))

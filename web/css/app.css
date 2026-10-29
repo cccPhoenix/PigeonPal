@@ -122,6 +122,19 @@ input, textarea, select { font: inherit; color: inherit; }
 .rail-chips .pill:hover { background: var(--hover); color: var(--ink); }
 .rail-chips .pill.on { background: var(--notice-soft); color: var(--notice-accent); box-shadow: inset 0 0 0 .5px var(--line-2); }
 .rail-chips .ic { width: 15px; height: 15px; }
+.notice-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 0 4px 8px; font-size: 12px; }
+.notice-sort { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--ink-3); }
+.notice-sort select { max-width: 174px; min-height: 32px; padding: 4px 6px; border: .5px solid var(--line-2); border-radius: 9px; background: var(--card); font-size: 12px; }
+.notice-row { position: relative; flex-shrink: 0; min-width: 0; }
+.notice-row .rail-item { padding-right: 78px; }
+.notice-row-actions { position: absolute; right: 7px; top: 10px; display: flex; gap: 2px; }
+.notice-row-actions .icon-btn { width: 30px; height: 30px; border-radius: 9px; color: var(--ink-3); }
+.notice-row-actions .icon-btn:hover { color: var(--ink); background: var(--hover); }
+.notice-row-actions .notice-star.on, .notice-star-mark { color: var(--notice-accent); }
+.notice-star.on .ic, .notice-star-mark .ic { fill: currentColor; }
+.notice-star-mark { display: inline-flex; vertical-align: -1px; margin-right: 4px; }
+.notice:not([data-pane="detail"]) .notice-row .rail-item { padding-right: 78px; }
+.notice:not([data-pane="detail"]) .notice-row-actions { top: 50%; transform: translateY(-50%); }
 .rail-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 4px; margin: 0 -4px; padding: 0 4px; }
 .rail-list .divider { flex-shrink: 0; margin: 16px 8px 6px; text-align: left; font-size: 11px; font-weight: 600; letter-spacing: .06em; }
 .rail-item {

@@ -1,6 +1,7 @@
 import { markHTML } from '../mark/index.js'
 import { icon } from './icons.js'
 import { escapeHtml } from './format.js'
+import { noticeUnreadCount } from '../services/notice-list.js'
 
 // The icon rail: 小浙's identity plus the view switcher. Labels expand on hover so the
 // rail can stay narrow without turning into a strip of anonymous glyphs.
@@ -43,10 +44,12 @@ ${btn({ id: 'me', label: '我的设置', html: `<span class="dock-me">${escapeHt
 
   // Badge-only update: re-rendering would restart the mark's animation and drop the gaze.
   function patchBadge(selector, n) {
-    const el = root.querySelector?.(`${selector} .badge`)
-    if (!el) return false
-    if (!n) el.remove()
-    else el.textContent = n > 99 ? '99+' : String(n)
+    const button = root.querySelector?.(selector)
+    if (!button) return false
+    const el = button.querySelector('.badge')
+    if (!n) el?.remove()
+    else if (el) el.textContent = n > 99 ? '99+' : String(n)
+    else button.insertAdjacentHTML('beforeend', badgeHTML(n))
     return true
   }
 
@@ -70,6 +73,14 @@ ${btn({ id: 'me', label: '我的设置', html: `<span class="dock-me">${escapeHt
     if (!b) return
     b.classList.remove('bump'); void b.offsetWidth; b.classList.add('bump')
   }
+
+  // Source reads, feed updates and trash actions all update the bell directly;
+  // it must not depend on a later view change or transcript render.
+  const syncNoticeBadge = () => setUnread(noticeUnreadCount(store.state))
+  store.on('unread', syncNoticeBadge)
+  store.on('notice', syncNoticeBadge)
+  store.on('notice-meta', syncNoticeBadge)
+  unread = noticeUnreadCount(store.state)
 
   root.addEventListener('click', e => {
     const b = e.target.closest('[data-view]')

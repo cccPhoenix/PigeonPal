@@ -167,7 +167,7 @@ test('adapter passes recommendation metadata and treats homework independently',
   assert.equal(calls, 2)
 })
 
-test('recommended list omits only rejected notices and all view restores original chronology and reason', () => {
+test('recommendation scope preserves the chosen sort and all view exposes excluded notices and reasons', () => {
   const store = createStore(null)
   store.upsertNotice('src-yunfeng', row('old', recommendation('recommended', 90), { publishedAt: 1 }))
   store.upsertNotice('src-yunfeng', row('new', recommendation('uncertain', 10), { publishedAt: 3 }))
@@ -179,6 +179,8 @@ test('recommended list omits only rejected notices and all view restores origina
   assert.ok(list.innerHTML.indexOf('data-notice="old"') < list.innerHTML.indexOf('data-notice="new"'))
   listeners.click({ target: { closest(selector) { return selector === '[data-rail="recommendation-mode"]' ? { dataset: { mode: 'all' } } : null } } })
   assert.match(list.innerHTML, /data-notice="excluded"/)
+  assert.ok(list.innerHTML.indexOf('data-notice="old"') < list.innerHTML.indexOf('data-notice="new"'))
+  store.setNoticeSort('newest')
   assert.ok(list.innerHTML.indexOf('data-notice="new"') < list.innerHTML.indexOf('data-notice="old"'))
   rail.openNotice('excluded')
   assert.match(detail.innerHTML, /仅限研究生/)

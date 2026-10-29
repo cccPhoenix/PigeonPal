@@ -8,6 +8,7 @@ import { DECISION_FIELDS } from './services/notice-summary.js'
 import { cleanHomework, isHomework, isHomeworkCard, defaultHomeworkMessages, homeworkCopy } from './services/homework.js'
 import { validCalendarDate, validCalendarTime } from './services/calendar.js'
 import { cleanRecommendation } from './services/recommendations.js'
+import { NOTICE_SORTS, noticeChannels, noticeDeleted } from './services/notice-list.js'
 
 export const STORAGE_KEY = 'pigeonpal.v1'
 // 'notice' is accepted only so legacy stored messages can be migrated into `notices`.
@@ -33,6 +34,8 @@ export function createInitialState() {
     channels: [{ id: 'bot', kind: 'bot' }, ...LOCAL_CHANNELS.map(c => ({ kind: 'source', notify: 'all', ...c }))],
     messages: Object.fromEntries(['bot', ...LOCAL_CHANNELS.map(c => c.id)].map(id => [id, []])),
     notices: {},
+    noticeMeta: {},
+    noticeSort: 'recommended',
     homeworkItems: {},
     calendarItems: {},
     calendarCompleted: {},
@@ -71,7 +74,21 @@ export function hydrate(raw) {
       if (!item.noticeId) continue
       fresh.notices[item.noticeId] = item
     }
-    trimNotices(fresh.notices)
+  }
+
+  if (Object.hasOwn(NOTICE_SORTS, stored.noticeSort)) fresh.noticeSort = stored.noticeSort
+  if (stored.noticeMeta && typeof stored.noticeMeta === 'object' && !Array.isArray(stored.noticeMeta)) {
+    for (const [id, value] of Object.entries(stored.noticeMeta)) {
+      if (!id || id.length > 1000 || !value || typeof value !== 'object') continue
+      const channel = noticeChannels(fresh).find(c => c.id === value.channelId)
+      const meta = {
+        ...(value.starred === true ? { starred: true } : {}),
+        ...(Number.isFinite(value.deletedAt) && value.deletedAt > 0 ? { deletedAt: value.deletedAt } : {}),
+        ...(channel && value.unread === true ? { unread: true, channelId: channel.id } : {}),
+      }
+      if (meta.deletedAt) { delete meta.unread; delete meta.channelId }
+      if (Object.keys(meta).length) Object.defineProperty(fresh.noticeMeta, id, { value: meta, enumerable: true, configurable: true, writable: true })
+    }
   }
 
   // Sources the user added themselves (waiting for a real adapter).
@@ -150,6 +167,20 @@ export function hydrate(raw) {
     message.noticeHeadsUp = true
     fresh.noticeDelivery[message.noticeId] = 'delivered'
   }
+  // Older versions counted revisions as separate unread notifications. Migrate
+  // their counters to unique retained notices, then derive every source counter
+  // from the same per-notice markers used by read/delete actions.
+  for (const channel of noticeChannels(fresh)) {
+    if (!stored.noticeMeta) {
+      const rows = Object.values(fresh.notices).filter(n => n.sourceId === channel.sourceId)
+        .sort((a, b) => (b.publishedAt || 0) - (a.publishedAt || 0))
+      const legacy = stored.unread?.[channel.id]
+      const count = Number.isSafeInteger(legacy) && legacy > 0 ? legacy : 0
+      for (const n of rows.slice(0, count)) fresh.noticeMeta[n.noticeId] = { unread: true, channelId: channel.id }
+    }
+    syncNoticeUnread(fresh, channel.id)
+  }
+  trimNotices(fresh.notices, fresh.noticeMeta)
   if (Number.isSafeInteger(stored.eventCursor) && stored.eventCursor >= 0) fresh.eventCursor = stored.eventCursor
   return fresh
 }
@@ -182,9 +213,12 @@ function cleanItem(item) {
 }
 
 // Keep only the newest NOTICE_CAP rows per source so localStorage stays bounded.
-function trimNotices(notices) {
+function trimNotices(notices, meta = {}) {
   const bySource = new Map()
   for (const item of Object.values(notices)) {
+    // User-managed rows and unread notices must survive a cold restart even if
+    // they are older than the small feed cache or gone from the remote catalog.
+    if (meta[item.noticeId]?.starred || meta[item.noticeId]?.deletedAt || meta[item.noticeId]?.unread) continue
     const key = item.sourceId ?? ''
     if (!bySource.has(key)) bySource.set(key, [])
     bySource.get(key).push(item)
@@ -194,6 +228,12 @@ function trimNotices(notices) {
     rows.sort((a, b) => (b.publishedAt ?? 0) - (a.publishedAt ?? 0))
     for (const drop of rows.slice(NOTICE_CAP)) delete notices[drop.noticeId]
   }
+}
+
+function syncNoticeUnread(state, channelId) {
+  const count = Object.values(state.noticeMeta).filter(m => m.unread && !m.deletedAt && m.channelId === channelId).length
+  if (count) state.unread[channelId] = count
+  else delete state.unread[channelId]
 }
 
 export function createStore(storage = globalThis.localStorage) {
@@ -211,7 +251,7 @@ export function createStore(storage = globalThis.localStorage) {
       // remain recoverable. Keep only a small warm cache in browser storage;
       // the next feed restores the complete catalog without loading any body.
       const notices = { ...state.notices }
-      trimNotices(notices)
+      trimNotices(notices, state.noticeMeta)
       try { storage?.setItem(STORAGE_KEY, JSON.stringify({ ...state, notices })); saveFailed = false } catch { if (!saveFailed) emit('save-failed'); saveFailed = true }
     }, 200)
   }
@@ -225,7 +265,41 @@ export function createStore(storage = globalThis.localStorage) {
     message: id => Object.values(state.messages).flat().find(m => m.id === id),
     lastMessage: id => state.messages[id]?.at(-1),
     notice: id => state.notices[id],
-    noticesOf: sourceId => Object.values(state.notices).filter(n => n.sourceId === sourceId).sort((a, b) => (b.publishedAt ?? 0) - (a.publishedAt ?? 0)),
+    noticesOf: sourceId => Object.values(state.notices).filter(n => n.sourceId === sourceId && !noticeDeleted(state, n.noticeId)).sort((a, b) => (b.publishedAt ?? 0) - (a.publishedAt ?? 0)),
+    setNoticeSort(value) {
+      if (!Object.hasOwn(NOTICE_SORTS, value) || state.noticeSort === value) return
+      state.noticeSort = value
+      save()
+      emit('notice-meta', { sort: value })
+    },
+    setNoticeStarred(id, starred) {
+      if (!state.notices[id] || typeof starred !== 'boolean') return
+      const meta = state.noticeMeta[id] ||= {}
+      if (starred) meta.starred = true
+      else delete meta.starred
+      if (!Object.keys(meta).length) delete state.noticeMeta[id]
+      save()
+      emit('notice-meta', { noticeId: id })
+    },
+    trashNotice(id) {
+      if (!state.notices[id] || noticeDeleted(state, id)) return
+      const meta = state.noticeMeta[id] ||= {}
+      const channelId = meta.channelId
+      meta.deletedAt = Date.now()
+      delete meta.unread
+      delete meta.channelId
+      if (channelId) syncNoticeUnread(state, channelId)
+      save()
+      emit('notice-meta', { noticeId: id })
+      emit('unread', channelId)
+    },
+    restoreNotice(id) {
+      if (!state.notices[id] || !noticeDeleted(state, id)) return
+      delete state.noticeMeta[id].deletedAt
+      if (!Object.keys(state.noticeMeta[id]).length) delete state.noticeMeta[id]
+      save()
+      emit('notice-meta', { noticeId: id })
+    },
     setNoticeDelivery(id, value) {
       if (!['pending', 'delivered', 'historical', 'filtered'].includes(value)) return
       state.noticeDelivery[id] = value
@@ -262,7 +336,12 @@ export function createStore(storage = globalThis.localStorage) {
       const revised = !created && existing.revision !== item.revision
       const recommendationChanged = !created && JSON.stringify(existing.recommendation) !== JSON.stringify(item.recommendation)
       state.notices[id] = cleanItem(item)
-      if (unread && (created || revised)) state.unread[channelId] = (state.unread[channelId] ?? 0) + 1
+      if (unread && !noticeDeleted(state, id)) {
+        const meta = state.noticeMeta[id] ||= {}
+        meta.unread = true
+        meta.channelId = channelId
+        syncNoticeUnread(state, channelId)
+      }
       save()
       emit('notice', { channelId, item: state.notices[id], created, revised, recommendationChanged })
       return { created, revised }
@@ -321,9 +400,20 @@ export function createStore(storage = globalThis.localStorage) {
     },
     markRead(channelId) {
       if (!state.unread[channelId]) return
+      for (const [id, meta] of Object.entries(state.noticeMeta)) {
+        if (meta.channelId !== channelId) continue
+        delete meta.unread
+        delete meta.channelId
+        if (!Object.keys(meta).length) delete state.noticeMeta[id]
+      }
       delete state.unread[channelId]
       save()
       emit('unread', channelId)
+    },
+    markNoticesRead(sourceId = null) {
+      for (const channel of noticeChannels(state)) {
+        if (!sourceId || channel.sourceId === sourceId) this.markRead(channel.id)
+      }
     },
     setProfile(patch) {
       Object.assign(state.profile, patch)

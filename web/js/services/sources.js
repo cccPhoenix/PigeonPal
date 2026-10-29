@@ -136,7 +136,7 @@ export function localAdapters(client) {
           ...(row.fetchable === false ? { fetchable: false } : {}),
           title: row.title, url: row.url, contentVersion: row.version,
           publishedDate: row.publishedAt || '',
-          publishedAt: Date.parse(`${row.publishedAt}T00:00:00+08:00`) || Date.parse(row.firstSeenAt) || Date.now(),
+          publishedAt: row.publishedAt ? Date.parse(`${row.publishedAt}T00:00:00+08:00`) || null : null,
           receivedAt: Date.parse(row.lastChangedAt || row.firstSeenAt),
           recommendation: cleanRecommendation(row.recommendation),
           kind: ({ academic: 'talk', activity: 'club', deadline: 'deadline' })[result?.category] || 'notice',
