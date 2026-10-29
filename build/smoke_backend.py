@@ -40,15 +40,18 @@ if __name__ == '__main__':
                 assert api('/api/auth/status')['bound'] is False
                 assert api('/api/ai/settings')['configured'] is (run == 1)
                 profile = api('/api/user-profile')
+                assert {row['id'] for row in api('/api/sources')['sources']} == {'yunfeng', 'danyang', 'lantian', 'itc', 'qsxy', 'bksy', 'xzzd'}
                 if run == 0:
                     assert profile['version'] == 0 and api('/api/reminders')['reminders'] == []
+                    assert profile['academy'] == ''
                     api('/api/ai/settings', {'apiKey': 'sk-offline-build-acceptance-only', 'automatic': False})
                     # Exercise frozen cryptography save/decrypt without any model request.
                     assert api('/api/ai/settings')['configured'] is True
-                    api('/api/user-profile', {'expectedVersion': 0, 'facts': {'degree': {'value': 'undergraduate', 'confirmed': True}}})
+                    api('/api/user-profile', {'expectedVersion': 0, 'academy': 'danyang', 'facts': {'degree': {'value': 'undergraduate', 'confirmed': True}}})
                     reminder_id = api('/api/reminders/create', {'title': '冻结后端验收', 'dueAt': int(time.time()*1000+60000), 'channelId': 'bot'})['reminder']['id']
                 else:
                     assert profile['facts']['degree']['value'] == 'undergraduate'
+                    assert profile['academy'] == 'danyang'
                     assert api('/api/reminders')['reminders'][0]['id'] == reminder_id
                     api('/api/reminders/update', {'id': reminder_id, 'patch': {'dueAt': int(time.time()*1000+600)}})
                     deadline = time.monotonic()+6

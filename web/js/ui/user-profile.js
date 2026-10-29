@@ -3,6 +3,7 @@ import { escapeHtml } from './format.js'
 import { apiErrorText } from '../services/api.js'
 
 export const DEGREE_LABELS = { undergraduate: '本科生', master: '硕士生', doctor: '博士生', postgraduate: '研究生', staff: '教职工', other: '其他' }
+export const ACADEMY_LABELS = { yunfeng: '云峰学园', danyang: '丹阳青溪学园', lantian: '蓝田学园' }
 export const preferenceLines = text => String(text || '').split(/\r?\n/).map(value => value.trim()).filter(Boolean)
 export const preferenceError = values => values.length > 12 ? '每类偏好最多填写 12 条，请合并或减少一些。' : values.some(value => Array.from(value).length > 120) ? '每条偏好最多 120 字，请缩短后保存。' : ''
 
@@ -28,6 +29,7 @@ export function openUserProfile({ client, root, onChange = () => {} }) {
     body.innerHTML = `${message ? `<p class="profile-alert" role="alert">${escapeHtml(message)}</p>` : ''}${readOnly ? '<p class="profile-alert" role="alert">本地画像文件读取异常，当前为只读恢复内容。可清空画像后重新填写。</p>' : ''}
 <form id="user-profile-form" data-profile-form><fieldset ${readOnly ? 'disabled' : ''} class="profile-fieldset">
 <section class="profile-card"><div class="profile-section-head"><h2>我的身份</h2><p>确认后的信息可用于判断通知资格。</p></div>
+<div class="field"><label for="up-academy">所属学园</label><select class="input" id="up-academy" data-academy><option value="">全部学园</option>${Object.entries(ACADEMY_LABELS).map(([value, label]) => `<option value="${value}" ${snapshot.academy === value ? 'selected' : ''}>${label}</option>`).join('')}</select><span class="help">默认推荐全部学园。选择后只推荐该学园的消息，其他公共来源照常推荐；全部原始通知仍可在「全部通知」查看。</span></div>
 <div class="profile-facts"><div class="field"><label for="up-degree">身份 / 学历</label><select class="input" id="up-degree" data-fact="degree"><option value="">暂不填写</option>${Object.entries(DEGREE_LABELS).map(([value, label]) => `<option value="${value}" ${fact('degree').value === value ? 'selected' : ''}>${label}</option>`).join('')}</select><label class="profile-confirm"><input type="checkbox" data-confirm="degree" ${fact('degree').confirmed ? 'checked' : ''}> 已确认，可用于判断资格</label></div>
 <div class="field"><label for="up-admissionYear">入学年份</label><input class="input" id="up-admissionYear" data-fact="admissionYear" type="number" min="1980" max="2100" value="${escapeHtml(fact('admissionYear').value ?? '')}" placeholder="例如 2025"><label class="profile-confirm"><input type="checkbox" data-confirm="admissionYear" ${fact('admissionYear').confirmed ? 'checked' : ''}> 已确认，可用于判断资格</label><span class="help">${snapshot.grade ? `当前为第 ${snapshot.grade} 学年；年级随学年计算。` : '填写入学年份后按学年计算年级。'}休学等特殊情况请按实际情况调整。</span></div>
 ${textFact('college', '学院', '例如 计算机科学与技术学院')}${textFact('major', '专业', '例如 软件工程')}</div>
@@ -77,7 +79,8 @@ ${textFact('college', '学院', '例如 计算机科学与技术学院')}${textF
     if (error) return toast(error)
     student.value = ''
     if (studentNumber && !fact('admissionYear').confirmed && (!facts.admissionYear.value || !facts.admissionYear.confirmed && String(facts.admissionYear.value) === String(fact('admissionYear').value))) delete facts.admissionYear
-    mutate(() => client.saveUserProfile({ expectedVersion: snapshot.version, facts, preferences, ...(studentNumber ? { studentNumber } : {}) }))
+    const academy = box.querySelector('[data-academy]').value
+    mutate(() => client.saveUserProfile({ expectedVersion: snapshot.version, academy, facts, preferences, ...(studentNumber ? { studentNumber } : {}) }))
   }
   function onClick(event) {
     const button = event.target.closest('[data-profile]')

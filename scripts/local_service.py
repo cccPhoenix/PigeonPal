@@ -356,6 +356,12 @@ class LocalServer(ThreadingHTTPServer):
 
 def handler_for(backend):
     class Handler(SimpleHTTPRequestHandler):
+        # Concurrent cold module requests otherwise all initialize mimetypes
+        # from the Windows registry. Pin core UI types before serving threads.
+        extensions_map = {**SimpleHTTPRequestHandler.extensions_map,
+                          ".js": "text/javascript", ".mjs": "text/javascript",
+                          ".css": "text/css", ".html": "text/html"}
+
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(WEB), **kwargs)
 

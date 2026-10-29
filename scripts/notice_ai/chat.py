@@ -103,7 +103,7 @@ PROMPT += """\n用户画像的已确认事实和通知偏好作为最小本机�
 
 
 SOURCE_KEYWORDS = {
-    "yunfeng": r"云峰", "itc": r"信息技术中心",
+    "yunfeng": r"云峰", "danyang": r"丹阳青溪|丹青", "lantian": r"蓝田", "itc": r"信息技术中心",
     "qsxy": r"求是学院", "bksy": r"本科生院",
 }
 

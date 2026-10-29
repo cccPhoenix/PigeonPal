@@ -206,6 +206,60 @@ class RecommendationTests(unittest.TestCase):
         self.assertTrue(self.service.view(notice(), "fp1")["allowPush"])
         self.assertFalse(self.service.needs_assessment(notice(), "fp1"))
 
+    def test_academy_selection_is_local_ready_and_independent_of_model_profile(self):
+        self.profiles.value.update(academy="lantian", facts={}, preferences={"interests": [], "avoid": []})
+        for source in ["yunfeng", "danyang", "lantian", "qsxy", "bksy", "itc", "xzzd"]:
+            with self.subTest(source=source):
+                item = {**notice(), "id": source + ":1", "sourceId": source}
+                original = copy.deepcopy(item)
+                result = self.service.view(item, "fp1")
+                excluded = source in {"yunfeng", "danyang"}
+                self.assertEqual(result["state"], "ready")
+                self.assertEqual(result["allowPush"], not excluded)
+                self.assertEqual(result["decision"], "not_applicable" if excluded else "uncertain")
+                self.assertFalse(self.service.needs_assessment(item, "fp1"))
+                self.assertEqual(item, original)
+        self.assertFalse(self.path.exists())
+
+    def test_academy_change_invalidates_cached_results_and_releasing_choice_restores_messages(self):
+        self.assertFalse(self.save()["allowPush"])
+        self.profiles.value.update(academy="danyang", version=2)
+        selected = self.service.view(notice(), "fp1")
+        self.assertEqual((selected["state"], selected["decision"], selected["allowPush"]),
+                         ("ready", "not_applicable", False))
+        self.assertIn("丹阳青溪学园", selected["reason"])
+        self.assertFalse(self.service.needs_assessment(notice(), "fp1"))
+        self.profiles.value.update(academy="", version=3)
+        restored = self.service.view(notice(), "fp1")
+        self.assertEqual((restored["state"], restored["allowPush"]), ("pending", True))
+        self.assertTrue(self.service.needs_assessment(notice(), "fp1"))
+        self.profiles.value.update(facts={}, preferences={"interests": [], "avoid": []}, version=4)
+        self.assertEqual(self.service.view(notice(), "fp1")["state"], "ready")
+        self.assertTrue(self.service.view(notice(), "fp1")["allowPush"])
+
+    def test_keep_override_can_preserve_another_academy_and_auto_restores_choice(self):
+        self.profiles.value["academy"] = "danyang"
+        self.assertFalse(self.service.view(notice(), "fp1")["allowPush"])
+        self.service.override("yunfeng:1", "keep")
+        kept = self.service.view(notice(), "fp1")
+        self.assertEqual((kept["state"], kept["decision"], kept["allowPush"]), ("ready", "recommended", True))
+        self.assertIn("保留推荐", kept["reason"])
+        self.assertFalse(self.service.needs_assessment(notice(), "fp1"))
+        restored = RecommendationService(self.profiles, self.path)
+        self.assertTrue(restored.view(notice(), "fp1")["allowPush"])
+        restored.override("yunfeng:1", "auto")
+        self.assertFalse(restored.view(notice(), "fp1")["allowPush"])
+
+    def test_academy_choice_does_not_require_healthy_model_cache_or_leave_profile_for_model(self):
+        self.profiles.value["academy"] = "danyang"
+        self.service.storage_error = "recommendation_storage_error"
+        excluded = self.service.view(notice(), "fp1")
+        self.assertEqual((excluded["state"], excluded["allowPush"]), ("ready", False))
+        self.service.storage_error = None
+        request = self.service.assessment_input(notice(), analysis(), "fp1")
+        self.assertNotIn("academy", request["profile"])
+        self.assertNotIn("danyang", json.dumps(request, ensure_ascii=False))
+
     def test_homework_always_local_and_accepted(self):
         item = notice()
         item["sourceId"] = "xzzd"
@@ -247,7 +301,7 @@ class PersonalizedClientTests(unittest.TestCase):
     def test_combined_one_request_profile_projection_and_bad_recommendation_independent(self):
         self.reply["recommendation"] = None
         context = {"version": 2, "facts": {"degree": "undergraduate", "studentId": "private-student"},
-                   "preferences": {"interests": ["志愿服务"], "avoid": []}, "password": "private-password"}
+                   "preferences": {"interests": ["志愿服务"], "avoid": []}, "password": "private-password", "academy": "danyang"}
         result = self.client.analyze_personalized({"content": "报名公告"}, context)
         self.assertEqual(result["analysis"]["summary"], "校园活动开放报名")
         self.assertEqual(result["recommendation"], {})
@@ -255,6 +309,7 @@ class PersonalizedClientTests(unittest.TestCase):
         user = json.loads(self.requests[0]["messages"][-1]["content"])
         self.assertNotIn("studentId", user["profile"]["facts"])
         self.assertNotIn("private-password", json.dumps(self.requests))
+        self.assertNotIn("academy", user["profile"])
 
     def test_reassessment_reuses_eligibility_no_article_or_unknown_root_fields(self):
         self.reply = raw(decision="uncertain")

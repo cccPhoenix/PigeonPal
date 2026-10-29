@@ -142,7 +142,16 @@ class NoticeProcessor:
         if self.recommendations is None or notice.get("sourceId") == "xzzd":
             return fallback
         try:
-            fingerprint = self.fingerprint(notice)
+            try:
+                fingerprint = self.fingerprint(notice)
+            except AIError:
+                # Local source selection needs only metadata, including while a
+                # new notice is still queued for its article body. An unavailable
+                # body must not temporarily release an excluded academy's push.
+                local = self.recommendations.view(notice, None)
+                if local.get("state") == "ready" and (not local["allowPush"] or local.get("override") == "keep"):
+                    return {**local, "deferPush": False}
+                return fallback
             result = self.recommendations.view(notice, fingerprint)
             result["deferPush"] = False
             # Wait briefly for the ordinary extraction+matching worker, rather

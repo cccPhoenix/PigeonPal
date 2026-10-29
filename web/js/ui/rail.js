@@ -18,7 +18,7 @@ const ANALYSIS_STATE = {
 const FETCH_STATE = { complete: '正文已采集', pending: '正文排队中', skipped: '仅保存链接', failed: '采集失败' }
 
 const cacheKey = n => `${n.noticeId}:${n.revision ?? ''}`
-const SOURCE_ICONS = { yunfeng: 'school', itc: 'computer', qsxy: 'graduate', bksy: 'book' }
+const SOURCE_ICONS = { yunfeng: 'school', danyang: 'school', lantian: 'school', itc: 'computer', qsxy: 'graduate', bksy: 'book' }
 const sourceIcon = sourceId => icon(SOURCE_ICONS[sourceId] ?? 'bell', 17)
 // Detail-endpoint URLs are not run through store.cleanItem, so pin the scheme here.
 const safeHref = url => (/^https?:\/\//.test(url ?? '') ? escapeHtml(url) : '')

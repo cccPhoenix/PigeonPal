@@ -23,6 +23,7 @@ from .schema import AIError
 
 FACT_FIELDS = ("degree", "admissionYear", "college", "major")
 DEGREES = ("undergraduate", "master", "doctor", "postgraduate", "staff", "other")
+ACADEMIES = ("", "yunfeng", "danyang", "lantian")
 MAX_PROFILE_BYTES = 65536
 _LOCAL_ZONE = timezone(timedelta(hours=8))
 _LOCKS = {}
@@ -71,6 +72,12 @@ def _fact_value(field, value):
     return _text(value, 120) or None
 
 
+def _academy(value):
+    if not isinstance(value, str) or value not in ACADEMIES:
+        _invalid()
+    return value
+
+
 def _preferences(value):
     if not isinstance(value, dict) or set(value) - {"interests", "avoid"}:
         _invalid()
@@ -90,7 +97,7 @@ def _preferences(value):
 
 
 def _empty(version=0, updated_at=None):
-    return {"schemaVersion": 1, "version": version, "updatedAt": updated_at,
+    return {"schemaVersion": 1, "version": version, "updatedAt": updated_at, "academy": "",
             "facts": {name: {"value": None, "confirmed": False, "source": "", "updatedAt": None}
                       for name in FACT_FIELDS},
             "preferences": {"interests": [], "avoid": []}}
@@ -115,13 +122,17 @@ def _source(value):
 
 
 def _validate(value):
+    required = {"schemaVersion", "version", "updatedAt", "facts", "preferences"}
     if (not isinstance(value, dict)
-            or set(value) != {"schemaVersion", "version", "updatedAt", "facts", "preferences"}
+            or not required <= set(value) <= required | {"academy"}
             or type(value["schemaVersion"]) is not int or value["schemaVersion"] != 1
             or type(value["version"]) is not int or not 0 <= value["version"] <= 9007199254740990
             or not isinstance(value["facts"], dict) or set(value["facts"]) != set(FACT_FIELDS)
             or not isinstance(value["preferences"], dict) or set(value["preferences"]) != {"interests", "avoid"}):
         _invalid()
+    # Existing schema-1 profiles predate the optional local source preference.
+    # Normalize in memory; reading never rewrites or discards the old file.
+    value["academy"] = _academy(value.get("academy", ""))
     _timestamp(value["updatedAt"])
     for field, fact in value["facts"].items():
         if (not isinstance(fact, dict) or set(fact) != {"value", "confirmed", "source", "updatedAt"}
@@ -262,7 +273,7 @@ class UserProfileStore:
             if self._storage_error:
                 raise AIError("profile_storage_error", 503)
             if (not isinstance(patch, dict)
-                    or set(patch) - {"facts", "preferences", "studentNumber", "expectedVersion"}):
+                    or set(patch) - {"facts", "preferences", "studentNumber", "expectedVersion", "academy"}):
                 _invalid()
             _source(source)
             self._check_version(patch.get("expectedVersion"))
@@ -271,6 +282,8 @@ class UserProfileStore:
                 _invalid()
             stamp = _stamp()
             new = copy.deepcopy(self._state)
+            if "academy" in patch:
+                new["academy"] = _academy(patch["academy"])
             if "studentNumber" in patch:
                 number = patch["studentNumber"]
                 if not isinstance(number, str) or not re.fullmatch(r"3\d{2,19}", number):

@@ -14,7 +14,7 @@ const recommendation = (decision, priority = 0) => ({ state: 'ready', decision, 
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
 
 function profilePageDocument() {
-  const nodes = [], body = { innerHTML: '' }, student = { value: '' }
+  const nodes = [], body = { innerHTML: '' }, student = { value: '' }, academy = { value: '' }
   const inputs = ['degree', 'admissionYear', 'college', 'major'].map(key => ({ dataset: { fact: key }, value: '' }))
   const preferences = ['interests', 'avoid'].map(key => ({ dataset: { preference: key }, value: '' }))
   const node = () => ({ innerHTML: '', listeners: {}, classList: { add() {}, remove() {} }, remove() {}, append() {}, setAttribute() {},
@@ -23,14 +23,58 @@ function profilePageDocument() {
     querySelector(selector) {
       if (selector === '[data-profile-body]') return body
       if (selector === '[data-student-number]') return student
+      if (selector === '[data-academy]') return academy
       if (selector.startsWith('[data-confirm=')) return { checked: false }
       return null
     },
     querySelectorAll(selector) { return selector === '[data-fact]' ? inputs : selector === '[data-preference]' ? preferences : [] },
   })
   const toast = node(), layer = node()
-  return { nodes, body, student, inputs, preferences, root: node(), document: { addEventListener() {}, createElement() { const value = node(); nodes.push(value); return value }, getElementById(id) { return id === 'toast' ? toast : layer } } }
+  return { nodes, body, student, academy, inputs, preferences, root: node(), document: { addEventListener() {}, createElement() { const value = node(); nodes.push(value); return value }, getElementById(id) { return id === 'toast' ? toast : layer } } }
 }
+
+test('academy source choice is saved with the profile version and read back from the service', async () => {
+  const originalDocument = globalThis.document
+  let saved = { version: 4, academy: 'yunfeng', facts: {}, preferences: {} }, changed = 0
+  const requests = []
+  const client = {
+    userProfile: async () => saved,
+    saveUserProfile: async patch => {
+      requests.push(patch)
+      saved = { ...saved, ...patch, version: saved.version + 1 }
+      return saved
+    },
+  }
+  const page = profilePageDocument()
+  globalThis.document = page.document
+  let mounted
+  try {
+    mounted = openUserProfile({ root: page.root, client, onChange: () => changed++ })
+    await tick()
+    assert.match(page.body.innerHTML, /<label for="up-academy">所属学园<\/label>/)
+    assert.match(page.body.innerHTML, /value="yunfeng" selected/)
+    assert.match(page.body.innerHTML, /value="danyang"/)
+    assert.match(page.body.innerHTML, /value="lantian"/)
+    assert.doesNotMatch(page.body.innerHTML, /data-confirm="academy"/)
+    page.academy.value = 'danyang'
+    page.root.listeners.submit({ target: { matches: () => true }, preventDefault() {} })
+    await tick()
+    assert.equal(requests[0].expectedVersion, 4)
+    assert.equal(requests[0].academy, 'danyang')
+    assert.equal(changed, 1)
+    assert.match(page.body.innerHTML, /value="danyang" selected/)
+    mounted.destroy()
+    mounted = openUserProfile({ root: page.root, client })
+    await tick()
+    assert.match(page.body.innerHTML, /value="danyang" selected/)
+    page.academy.value = ''
+    page.root.listeners.submit({ target: { matches: () => true }, preventDefault() {} })
+    await tick()
+    assert.equal(requests[1].expectedVersion, 5)
+    assert.equal(requests[1].academy, '')
+    assert.match(page.body.innerHTML, /<option value="">全部学园<\/option>/)
+  } finally { mounted?.destroy(); globalThis.document = originalDocument }
+})
 
 test('inline profile renders in its host and releases handlers and data on view change', async () => {
   const originalDocument = globalThis.document
@@ -194,11 +238,12 @@ test('profile API writes use local CSRF endpoint with expected version and no br
     return { ok: true, json: async () => path === '/api/bootstrap' ? { csrfToken: 'local-test-token' } : { version: 1 } }
   })
   await client.userProfile()
-  await client.saveUserProfile({ expectedVersion: 0, preferences: { interests: ['志愿活动'], avoid: [] } })
+  await client.saveUserProfile({ expectedVersion: 0, academy: 'lantian', preferences: { interests: ['志愿活动'], avoid: [] } })
   await client.clearUserProfile({ expectedVersion: 1 })
   await client.setRecommendationOverride('notice', 'keep')
   assert.deepEqual(calls.map(([path]) => path), ['/api/bootstrap', '/api/user-profile', '/api/user-profile', '/api/user-profile/reset', '/api/recommendations/override'])
   assert.equal(JSON.parse(calls[2][1].body).expectedVersion, 0)
+  assert.equal(JSON.parse(calls[2][1].body).academy, 'lantian')
   assert.equal(calls[2][1].headers['X-PigeonPal-Token'], 'local-test-token')
 })
 

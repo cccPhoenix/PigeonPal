@@ -166,6 +166,57 @@ class ProfilePipelineTests(unittest.TestCase):
         self.assertTrue(kept["notifyEligible"])
         self.assertFalse(kept["deferPush"])
 
+    def test_local_academy_choice_filters_delivery_without_model_and_preserves_all_notices(self):
+        notice = self.seed()
+        self.backend.ai.configure(AIConfig())
+        selected = self.backend.save_user_profile({"academy": "danyang", "expectedVersion": 0})
+        self.assertEqual(selected["academy"], "danyang")
+        excluded = self.backend.notification_candidates("yunfeng")["items"][0]
+        self.assertFalse(excluded["notifyEligible"])
+        self.assertFalse(excluded["deferPush"])
+        self.assertEqual(self.recommendation(notice)["state"], "ready")
+        self.assertEqual(self.backend.notices("yunfeng")["total"], 1)
+        self.assertEqual(self.backend.notice_detail(notice["id"])["content"], LONG_BODY)
+        self.assertFalse(self.backend.ai.recommendations.needs_assessment(notice, self.backend.ai.fingerprint(notice)))
+        self.assertEqual(self.model.personalized + self.model.assessed + self.model.analyzed, [])
+
+        self.backend.override_recommendation({"noticeId": notice["id"], "decision": "keep"})
+        self.assertTrue(self.backend.notification_candidates("yunfeng")["items"][0]["notifyEligible"])
+        self.backend.override_recommendation({"noticeId": notice["id"], "decision": "auto"})
+        self.assertFalse(self.backend.notification_candidates("yunfeng")["items"][0]["notifyEligible"])
+        cleared = self.backend.clear_user_profile({"expectedVersion": selected["version"]})
+        self.assertEqual(cleared["academy"], "")
+        self.assertTrue(self.backend.notification_candidates("yunfeng")["items"][0]["notifyEligible"])
+        self.assertEqual(self.backend.notices("yunfeng")["total"], 1)
+
+    def test_academy_api_saves_partial_profile_and_rejects_invalid_choices(self):
+        self.undergraduate()
+        request = self.api()
+        status, saved = request("POST", "/api/user-profile", {"academy": "lantian", "expectedVersion": 1})
+        self.assertEqual((status, saved["academy"], saved["version"]), (200, "lantian", 2))
+        self.assertEqual(saved["facts"]["degree"]["value"], "undergraduate")
+        self.assertEqual(request("GET", "/api/user-profile")[1]["academy"], "lantian")
+        self.assertEqual(request("POST", "/api/user-profile", {"academy": "unknown", "expectedVersion": 2})[0], 400)
+        self.assertEqual(request("POST", "/api/user-profile", {"academy": "danyang", "expectedVersion": 1})[0], 409)
+        status, restored = request("POST", "/api/user-profile", {"academy": "", "expectedVersion": 2})
+        self.assertEqual((status, restored["academy"], restored["version"]), (200, "", 3))
+
+    def test_academy_choice_applies_before_article_body_is_available(self):
+        row = {"id": "yunfeng:pending", "title": "正文待抓取", "publishedAt": "2026-10-20",
+               "url": "https://yunfeng.zju.edu.cn/pending/page.htm"}
+        self.backend.store.sync_list("yunfeng", [row], time.time())
+        self.backend.save_user_profile({"academy": "danyang"})
+        result = self.backend.notices("yunfeng")["items"][0]
+        self.assertEqual(result["state"], "pending")
+        self.assertEqual(result["recommendation"]["state"], "ready")
+        self.assertFalse(result["recommendation"]["allowPush"])
+        self.assertFalse(self.backend.notification_candidates("yunfeng")["items"][0]["notifyEligible"])
+        self.backend.override_recommendation({"noticeId": row["id"], "decision": "keep"})
+        self.assertTrue(self.backend.notification_candidates("yunfeng")["items"][0]["notifyEligible"])
+        self.backend.override_recommendation({"noticeId": row["id"], "decision": "auto"})
+        self.backend.save_user_profile({"academy": ""})
+        self.assertTrue(self.backend.notification_candidates("yunfeng")["items"][0]["notifyEligible"])
+
     def test_matching_failure_and_damaged_profile_keep_notifications_available(self):
         notice = self.seed()
         self.assertTrue(self.backend.ai.run_once())
