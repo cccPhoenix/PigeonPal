@@ -30,7 +30,7 @@ adapter = { id, channelId, fetch: async () => Item[] }
 Item = { id, title, url, publishedAt, kind?, eventAt?, eventEnd?, where?, summary? }
 ```
 
-- `localAdapters(client)` 按 `LOCAL_CHANNELS` 注册表读取云峰、ITC、求是学院、本科生院的本机通知 API。`startFeed` 每五秒检查本机数据，避免轮询重叠；学校页面采集仍按 300 秒检查与同主机 15–30 秒间隔执行。
+- `localAdapters(client)` 按 `LOCAL_CHANNELS` 注册表读取云峰、丹阳青溪、蓝田、ITC、求是学院、本科生院及学在浙大的本机通知 API。`startFeed` 每五秒检查本机数据，避免轮询重叠；学校页面采集仍按 300 秒检查与同主机 15–30 秒间隔执行。
 - 按 `id + revision` 识别元信息、正文或整理结果更新；消息按 `noticeId` 原位更新，避免重复追加同一通知。
 - `noticeCopy(item)` 与详情共用 `notice-summary.js` 展示新整理字段，只有 `analysis.state === ready` 且新字段完整时才展示决策摘要；其余显示待整理、正在整理、失败、缺正文或缺 key 等真实状态。未知发布日期保留为空，不推测年份。
 - `kind`：`talk` 报告会、`deadline` 截止或开放时间、`club` 活动、`notice` 其他。
@@ -52,7 +52,7 @@ client.events(cursor)
 
 学在浙大作业另以原站明确截止时刻前六小时安排本地提醒；不调用模型。事件可附 `item`（本地作业元信息），前端作为独立提醒消息复发完整作业卡片，不与原卡片去重合并。截止时间改变会改期，已提交、已关闭或已截止的自动任务会取消；只有日期的不猜时刻。常规作业默认取最近五条明确未提交与临近截止三条，去重后按截止时间正序，未知截止时间放最后；作业来源按完整快照替换旧卡片，不通过通用消息逐条追加。详情见 [作业说明](homework.md)。
 
-`systemNotify(title, body)` 仍负责浏览器后台通知，需用户授权；频道静音、主动消息开关和安静时段生效。浏览器关闭时，本机服务记录事件供重新打开补收。原生桌面通知和开机常驻尚未实现。
+`systemNotify(title, body)` 仍负责浏览器后台通知，需用户授权；频道静音、主动消息开关和安静时段生效。浏览器关闭时，本机服务记录事件供重新打开补收。Electron 桌面版由主进程每五秒检查通知候选与已到期提醒，使用原生系统通知，并将去重记录保存到 `desktop-notifications.json`；投递失败保留重试，成功或被静音的条目不会在后续轮询重复弹出。桌面窗口关闭后隐藏到托盘，后台继续抓取与提醒；从托盘退出才关闭本机服务。开机自动启动尚未实现。
 
 ## 4. 数据
 

@@ -6,6 +6,8 @@ submission files, grades and session material never enter a checkpoint.
 
 from __future__ import annotations
 
+from http.client import HTTPException
+
 import copy
 from datetime import date, datetime
 import json
@@ -191,7 +193,7 @@ class XzzdClient(SlowClient):
                     if result["code"] == 403:
                         raise CrawlFailure(denied_code, 3600)
                 return result
-        except (URLError, TimeoutError, OSError):
+        except (HTTPException, URLError, TimeoutError, OSError):
             raise CrawlFailure("network_error") from None
         except ValueError:
             raise CrawlFailure("unsafe_api_redirect") from None

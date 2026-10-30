@@ -96,7 +96,7 @@ export const preferenceError = values => values.length > 12 ? '每类偏好最�
 
 // The snapshot stays in this view and is discarded when the view closes.
 // It is never written into browser persistence or conversation history.
-export function openUserProfile({ client, root, onChange = () => {} }) {
+export function openUserProfile({ client, root, onChange = () => {}, onLoad = () => {} }) {
   let snapshot = null, busy = false, closed = false, sequence = 0, academyPicker = null
   const initial = `<div class="profile-page-scroll"><div class="profile-page-inner"><header class="profile-page-header"><h1 id="user-profile-title">用户画像</h1><p>告诉小浙你的身份和关注方向，方便推荐更合适的校园消息。</p></header><div data-profile-body>正在读取本地画像…</div></div></div>`
   const dispose = () => {
@@ -133,7 +133,15 @@ ${textFact('college', '学院', '例如 计算机科学与技术学院')}${textF
   async function load(message = '') {
     const current = ++sequence
     busy = true
-    try { const value = await client.userProfile(); if (closed || current !== sequence) return; snapshot = value; draw(message) }
+    try {
+      const value = await client.userProfile()
+      if (closed || current !== sequence) return
+      snapshot = value
+      // Reads also restore app filtering after a failed startup request.
+      // Keep them separate from mutation callbacks that refresh recommendations.
+      onLoad(value)
+      draw(message)
+    }
     catch (error) {
       if (!closed && current === sequence) {
         if (error.code === 'profile_storage_error') snapshot = null

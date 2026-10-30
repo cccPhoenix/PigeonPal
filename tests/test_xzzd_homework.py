@@ -1,6 +1,7 @@
 """Offline homework API boundaries, pagination and privacy regression checks."""
 
 from email.message import Message
+from http.client import IncompleteRead
 from http.cookiejar import CookieJar
 import json
 from pathlib import Path
@@ -57,6 +58,17 @@ class Opener:
 
 
 class TransportTests(unittest.TestCase):
+    def test_truncated_response_is_a_retryable_network_failure(self):
+        class Truncated(Response):
+            def read(self, limit):
+                raise IncompleteRead(b"private-homework", 10)
+        client, _ = self.client([Truncated()])
+        with self.assertRaises(CrawlFailure) as raised:
+            client.json("/api/todos?no-intercept=true")
+        self.assertEqual(str(raised.exception), "network_error")
+        self.assertIsNotNone(client.last_finished)
+
+
     def client(self, responses):
         self.time = 100
         self.waits = []

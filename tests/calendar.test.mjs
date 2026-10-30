@@ -128,3 +128,15 @@ test('calendar details show stored homework and notice context', () => {
   assert.match(noticeHTML, /报告厅/)
   assert.match(noticeHTML, /2026-10-25 14:30/)
 })
+
+test('notice completion transfers to an explicit calendar item and remains editable', () => {
+  const store = createStore(null)
+  store.setCalendarCompleted('notice:n1', true)
+  store.upsertCalendarItem({ id: 'cal-notice-one', noticeId: 'n1', title: '讲座', date: '2026-10-30' })
+  assert.equal(buildCalendarItems(store.state)[0].completed, true)
+  store.setCalendarCompleted('cal-notice-one', false)
+  assert.equal(buildCalendarItems(store.state)[0].completed, false)
+  assert.equal(buildCalendarItems(hydrate(JSON.stringify(store.state)))[0].completed, false)
+  store.upsertCalendarItem({ id: 'cal-notice-one', noticeId: 'n1', title: '讲座更新', date: '2026-10-31' })
+  assert.equal(buildCalendarItems(store.state)[0].completed, false)
+})

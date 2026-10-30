@@ -6,7 +6,7 @@ function startBackend({ packaged, resourcesPath, root, userData, offline=false, 
   const args=[...(packaged?[]:[join(root,'scripts','desktop_service.py')]),'--data-dir',join(userData,'data'),'--auth-dir',join(userData,'auth'),...(offline?['--offline']:[])]
   const child=spawn(command,args,{stdio:['pipe','pipe','pipe'],windowsHide:true,cwd:packaged?resourcesPath:root,env:{...process.env,PYTHONUNBUFFERED:'1'}})
   let settled=false, closing=false, stopped=false
-  const closed=new Promise(resolve=>child.once('exit',()=>{stopped=true;resolve()}))
+  const closed=new Promise(resolve=>child.once('close',()=>{stopped=true;resolve()}))
   const ready=new Promise((resolve,reject)=>{
     const timer=setTimeout(()=>fail('backend_start_timeout'),30000)
     function fail(code) {if(!settled){settled=true;clearTimeout(timer);reject(new Error(code));child.stdin.destroy();child.kill()}}

@@ -1,6 +1,6 @@
 // Native delivery is independent of renderer timers. Only IDs and preferences persist.
 const defaults = () => ({ version:1, preferences:{ enabled:true, proactive:true, botName:'小浙', nickname:'同学', quietStart:'23:00', quietEnd:'07:30', muted:[] }, sources:{}, reminders:{} })
-const sourceIds = new Set(['yunfeng','itc','qsxy','bksy','xzzd'])
+const sourceIds = new Set(['yunfeng','danyang','lantian','itc','qsxy','bksy','xzzd'])
 function cleanPreferences(p, before=defaults().preferences) {
   const out={...before}
   for(const k of ['enabled','proactive']) if(typeof p?.[k]==='boolean') out[k]=p[k]
@@ -34,9 +34,12 @@ class NotificationMonitor {
       if(refresh) group=await refresh(group)
       if(!group.length) continue
       if(!allowedNow(this.state.preferences,channelId,this.now())) { for(const row of group) consumed.add(row.id); continue }
-      const chunks=group.length>3?[{title,channelId,body:`有 ${group.length} 条新消息，点击打开鸽友查看。`}]:group.map(row=>({title,channelId,body:Array.from(row.title||'有一条新消息').slice(0,160).join('')}))
-      for(const chunk of chunks) if(!await this.notify(chunk)) return false
-      for(const row of group) consumed.add(row.id)
+      const chunks=group.length>3?[group]:group.map(row=>[row])
+      for(const chunk of chunks) {
+        const body=chunk.length>3?`有 ${chunk.length} 条新消息，点击打开鸽友查看。`:Array.from(chunk[0].title||'有一条新消息').slice(0,160).join('')
+        if(!await this.notify({title,channelId,body})) return false
+        for(const row of chunk) consumed.add(row.id)
+      }
     }
     return true
   }
@@ -57,12 +60,14 @@ class NotificationMonitor {
       }
       for(const [channelId,rows] of groups) {
         const consumed=new Set()
-        if(await this.send(rows,`${this.state.preferences.botName} · 提醒到时间了`,channelId,async queued=>{
+        try { await this.send(rows,`${this.state.preferences.botName} · 提醒到时间了`,channelId,async queued=>{
           const fresh=(await this.api('/api/reminders')).reminders
           return queued.filter(old=>fresh.some(r=>r.id===old.id&&r.status==='pending'&&r.notifyEligible!==false&&r.deliveredAt===old.deliveredAt))
-        },consumed)) for(const r of rows) if(consumed.has(r.id)) next.reminders[r.id]=r.deliveredAt
+        },consumed) } finally {
+          for(const r of rows) if(consumed.has(r.id)) next.reminders[r.id]=r.deliveredAt
+          this.commit(next)
+        }
       }
-      this.commit(next)
       const {sources}=await this.api('/api/sources')
       for(const source of sources??[]) {
         if(!sourceIds.has(source.id) || !['ready','partial'].includes(source.state)) continue
@@ -78,11 +83,14 @@ class NotificationMonitor {
           const next=structuredClone(this.state), before=next.sources[source.id]
           const ids=items.filter(row=>typeof row.id==='string'&&row.id.startsWith(source.id+':'))
           // Per-source first successful snapshot, not an empty pre-login response.
-          if(!before) next.sources[source.id]=Object.fromEntries(ids.map(row=>[row.id,true]))
+          if(!before) {
+            next.sources[source.id]=Object.fromEntries(ids.map(row=>[row.id,true]))
+            this.commit(next)
+          }
           else {
             const fresh=ids.filter(row=>!before[row.id])
             const consumed=new Set(fresh.filter(row=>row.notifyEligible===false&&!row.deferPush).map(row=>row.id))
-            if(!await this.send(fresh.filter(row=>row.notifyEligible!==false&&!row.deferPush),source.title||'校园新通知',`src-${source.id}`,async queued=>{
+            try { await this.send(fresh.filter(row=>row.notifyEligible!==false&&!row.deferPush),source.title||'校园新通知',`src-${source.id}`,async queued=>{
               const eligible=new Set(); let nextOffset=0
               do {
                 const page=await this.api(`/api/notification-candidates?source=${source.id}&offset=${nextOffset}`)
@@ -93,10 +101,11 @@ class NotificationMonitor {
                 nextOffset=page.nextOffset
               } while(Number.isSafeInteger(nextOffset)&&nextOffset>0)
               return queued.filter(row=>eligible.has(row.id))
-            },consumed)) continue
-            for(const row of fresh) if(consumed.has(row.id)) before[row.id]=true
+            },consumed) } finally {
+              for(const row of fresh) if(consumed.has(row.id)) before[row.id]=true
+              this.commit(next)
+            }
           }
-          this.commit(next)
         } catch { /* One inaccessible source must not block others or reminders. */ }
       }
     } finally { this.polling=false }

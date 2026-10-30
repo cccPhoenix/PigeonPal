@@ -8,6 +8,8 @@ Only fixed error/progress codes leave this module.
 
 from __future__ import annotations
 
+from http.client import HTTPException
+
 import copy
 from dataclasses import dataclass
 import http.cookiejar
@@ -374,7 +376,7 @@ class _CASClient:
                 if "该信息仅允许校内地址访问" in text or "您当前ip并非校内地址" in text:
                     raise AuthError("campus_network_required")
                 return text, None
-        except (URLError, TimeoutError, OSError):
+        except (HTTPException, URLError, TimeoutError, OSError):
             raise AuthError("network_error") from None
         finally:
             self.last_finished = self.clock()

@@ -262,3 +262,23 @@ test('homework course dropdown filters assignments and survives view changes and
   assert.match(listRoot.innerHTML, /作业math/)
   assert.match(listRoot.innerHTML, /data-course="" aria-selected="true"/)
 })
+
+test('selected homework fetches updated detail after a snapshot revision without reopening', async () => {
+  const store = createStore(null), listRoot = pane(), detailRoot = pane()
+  const now = Date.parse('2026-10-19T12:00:00+08:00')
+  const assignment = { ...item('xzzd:revision', 'xzzd', now), kind: 'homework',
+    homework: { openAt: '2026-10-01T08:00:00+08:00', deadlineAt: '2026-10-30T20:00:00+08:00', submissionStatus: 'not_submitted' } }
+  store.syncHomeworkSnapshot([assignment], { now })
+  let requests = 0
+  const rail = createRail({ listRoot, detailRoot, store, client: { notice: async () => ({ state: 'complete', content: `作业正文 ${++requests}` }) } })
+  rail.setView('homework')
+  rail.openHomework(assignment.noticeId)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.match(detailRoot.innerHTML, /作业正文 1/)
+  store.syncHomeworkSnapshot([{ ...assignment, revision: 'r2' }], { now })
+  rail.render()
+  rail.render() // repeated paints must share the pending request
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(requests, 2)
+  assert.match(detailRoot.innerHTML, /作业正文 2/)
+})

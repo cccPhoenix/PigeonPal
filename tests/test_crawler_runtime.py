@@ -1,6 +1,7 @@
 """Small offline checks for pacing, auth boundaries and incremental scheduling."""
 
 from email.message import Message
+from http.client import IncompleteRead
 from pathlib import Path
 import sys
 import tempfile
@@ -63,6 +64,17 @@ class Opener:
 
 
 class TransportTests(unittest.TestCase):
+    def test_truncated_response_is_a_retryable_network_failure(self):
+        class Truncated(Response):
+            def read(self, limit):
+                raise IncompleteRead(b"private-body", 10)
+        client, _, _ = self.client([Truncated()])
+        with self.assertRaises(CrawlFailure) as raised:
+            client.html("https://itc.zju.edu.cn/90618/list.psp")
+        self.assertEqual(str(raised.exception), "network_error")
+        self.assertIsNotNone(client.last_finished)
+
+
     def client(self, responses, protected=False):
         clock = Clock()
         opener = Opener(responses)

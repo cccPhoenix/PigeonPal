@@ -1,6 +1,7 @@
 """Offline ZJUAM fixtures; these tests never contact university servers."""
 
 from email.message import Message
+from http.client import IncompleteRead
 import json
 from pathlib import Path
 import sys
@@ -87,6 +88,16 @@ def complete():
 
 
 class ZjuamAuthTests(unittest.TestCase):
+    def test_truncated_response_keeps_network_retry_classification(self):
+        class Truncated(Response):
+            def read(self, maximum):
+                raise IncompleteRead(b"private-login", 10)
+        client, _, _, cancel = self.client([Truncated()])
+        with self.assertRaises(AuthError) as raised:
+            self.login(client, cancel)
+        self.assertEqual(str(raised.exception), "network_error")
+
+
     def client(self, responses, *, cancel=None, budget=60):
         clock = Clock()
         progress = []

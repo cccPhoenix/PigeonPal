@@ -127,7 +127,15 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
 <div class="pane-scroll"><div class="empty">左边选一项作业看看</div></div>`)
       return
     }
-    const cached = homeworkCache.get(cacheKey(n))
+    const key = cacheKey(n)
+    if (n.real && !homeworkCache.has(key)) {
+      homeworkCache.set(key, { state: 'pending' })
+      client.notice(n.noticeId)
+        .then(detail => homeworkCache.set(key, detail))
+        .catch(error => homeworkCache.set(key, error))
+        .then(() => { if (view === 'homework' && selectedHomework === n.noticeId) renderDetail() })
+    }
+    const cached = homeworkCache.get(key)
     const content = cached instanceof Error
       ? `<div class="note">${escapeHtml(apiErrorText(cached))} <button class="btn" data-act="retry-homework">重试</button></div>${homeworkDetailHTML(n, {}, { embedded: true })}`
       : homeworkDetailHTML(n, cached || { state: 'pending' }, { embedded: true })
@@ -305,12 +313,6 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
       detailRoot.classList.remove('detail-switching')
       void detailRoot.offsetWidth
       detailRoot.classList.add('detail-switching')
-    }
-    if (n.real && !homeworkCache.has(cacheKey(n))) {
-      client.notice(n.noticeId)
-        .then(detail => homeworkCache.set(cacheKey(n), detail))
-        .catch(error => homeworkCache.set(cacheKey(n), error))
-        .then(() => { if (view === 'homework' && selectedHomework === noticeId) renderDetail() })
     }
   }
 

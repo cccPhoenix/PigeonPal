@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from http.client import HTTPException
 import json
 import socket
 from urllib.error import HTTPError, URLError
@@ -65,7 +66,8 @@ def send_json(request, timeout):
         raise AIError("ai_request_rejected") from None
     except (TimeoutError, socket.timeout):
         raise AIError("ai_timeout", 504, True) from None
-    except (URLError, OSError):
+    except (HTTPException, URLError, OSError):
+        # Truncated upstream bodies raise IncompleteRead (HTTPException), not URLError.
         raise AIError("ai_network_error", 503, True) from None
     except (UnicodeError, ValueError):
         raise AIError("ai_response_invalid") from None

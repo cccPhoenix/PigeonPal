@@ -8,6 +8,8 @@ revoke the campus identity. Redirects never replay that credential POST.
 
 from __future__ import annotations
 
+from http.client import HTTPException
+
 import copy
 import http.cookiejar
 from html.parser import HTMLParser
@@ -447,7 +449,7 @@ class SiteSessionProvider:
             raise SiteSessionError("invalid_sso_page")
         except SiteSessionError:
             raise
-        except (URLError, TimeoutError, OSError):
+        except (HTTPException, URLError, TimeoutError, OSError):
             raise SiteSessionError("network_error") from None
         except Exception:
             raise SiteSessionError("invalid_sso_page") from None

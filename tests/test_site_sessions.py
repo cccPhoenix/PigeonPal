@@ -1,6 +1,7 @@
 """Offline SSO boundary tests; never contact campus hosts or read credentials."""
 
 from email.message import Message
+from http.client import IncompleteRead
 from http.cookiejar import CookieJar
 from pathlib import Path
 import sys
@@ -106,6 +107,18 @@ def complete():
 
 
 class SiteSessionTests(unittest.TestCase):
+    def test_truncated_response_keeps_network_retry_classification(self):
+        class Truncated(Response):
+            def read(self, maximum):
+                raise IncompleteRead(b"private-sso", 10)
+        provider, manager, _ = self.provider([Truncated()])
+        with self.assertRaises(SiteSessionError) as raised:
+            provider.prepare("itc", threading.Event())
+        self.assertEqual(str(raised.exception), "network_error")
+        self.assertIsNone(provider.session_for("itc"))
+        self.assertIsNotNone(manager.campus_session())
+
+
     def provider(self, responses, *, manager=None, on_call=None):
         manager = manager or Manager()
         transports = []

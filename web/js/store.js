@@ -398,7 +398,12 @@ export function createStore(storage = globalThis.localStorage) {
     },
     setCalendarCompleted(id, completed) {
       if (typeof completed !== 'boolean') return
-      if (state.calendarItems[id]) state.calendarItems[id].completed = completed
+      if (state.calendarItems[id]) {
+        const item = state.calendarItems[id]
+        item.completed = completed
+        // An explicit edit supersedes completion inherited from a notice reminder.
+        if (item.noticeId) delete state.calendarCompleted[`notice:${item.noticeId}`]
+      }
       else if (/^(homework:|notice:|reminder:)/.test(id) && id.length <= 260) state.calendarCompleted[id] = completed
       else return
       save()

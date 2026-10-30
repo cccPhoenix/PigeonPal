@@ -18,3 +18,13 @@ test('parallel desktop module fetches do not stall at the server listen backlog'
  const service=startBackend({packaged:false,root:resolve('.'),userData:dir,offline:true})
  try {const url=await service.ready;await Promise.all(files.map(async file=>{const response=await fetch(url+'/js/'+file.replaceAll('\\','/'),{signal:AbortSignal.timeout(4000)});assert.equal(response.status,200);assert.match(response.headers.get('content-type'),/^text\/javascript\b/);await response.arrayBuffer()}))}finally{await service.close();rmSync(dir,{recursive:true})}
 })
+test('a missing backend executable closes promptly after startup fails',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'pigeonpal-missing-backend-'))
+ const service=startBackend({packaged:true,resourcesPath:dir,root:resolve('.'),userData:dir,offline:true})
+ try {
+  await assert.rejects(service.ready,/backend_start_failed/)
+  const started=performance.now()
+  await service.close()
+  assert.ok(performance.now()-started<1000,'failed spawn must not wait for the shutdown timeout')
+ } finally {rmSync(dir,{recursive:true})}
+})

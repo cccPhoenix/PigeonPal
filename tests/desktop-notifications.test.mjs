@@ -53,3 +53,42 @@ test('notification baseline uses a complete source index rather than the bounded
  const f=fixture(),api=f.monitor.api,paths=[];f.monitor.api=async path=>{paths.push(path);return api(path)}
  await f.monitor.poll();assert.ok(paths.some(path=>path.startsWith('/api/notification-candidates?source=')))
 })
+for (const kind of ['reminder','source']) for (const failure of ['false','throw']) {
+ test(`${kind} persists earlier deliveries when a later toast ${failure === 'false' ? 'fails' : 'throws'}`,async()=>{
+  const f=fixture()
+  if(kind==='source') {await f.monitor.poll();f.data.items=[{id:'yunfeng:a',title:'first'},{id:'yunfeng:b',title:'second'}]}
+  else f.data.reminders=['a','b'].map(id=>({id,title:id==='a'?'first':'second',status:'pending',deliveredAt:now,channelId:'bot'}))
+  let calls=0
+  f.monitor.notify=async message=>{if(++calls===2){if(failure==='throw')throw new Error('delivery_failed');return false}f.sent.push(message);return true}
+  await f.monitor.poll().catch(()=>{})
+  const second=fixture(f.state());second.data.items=f.data.items;second.data.reminders=f.data.reminders
+  await second.monitor.poll()
+  assert.deepEqual(second.sent.map(row=>row.body),['second'])
+ })
+}
+test('a summary reduced to individual toasts preserves partial delivery',async()=>{
+ const f=fixture();await f.monitor.poll()
+ f.data.items=['a','b','c','d'].map(id=>({id:`yunfeng:${id}`,title:id}))
+ const api=f.monitor.api;let reads=0
+ f.monitor.api=async path=>{const result=await api(path);if(path.startsWith('/api/notification-candidates')&&++reads===2)f.data.items=f.data.items.slice(0,2);return path.startsWith('/api/notification-candidates')?{items:f.data.items,nextOffset:null}:result}
+ let calls=0;f.monitor.notify=async message=>{if(++calls===2)return false;f.sent.push(message);return true}
+ await f.monitor.poll()
+ const second=fixture(f.state());second.data.items=f.data.items;await second.monitor.poll()
+ assert.deepEqual(second.sent.map(row=>row.body),['b'])
+})
+
+for (const sourceId of ['danyang', 'lantian']) {
+ test(`${sourceId} establishes a baseline and delivers eligible new academy notices once`, async()=>{
+  const f=fixture()
+  f.data.sources=[{id:sourceId,title:'学园通知',state:'ready'}]
+  f.data.items=[{id:`${sourceId}:old`,title:'历史通知'}]
+  await f.monitor.poll()
+  assert.deepEqual(f.state().sources[sourceId],{[`${sourceId}:old`]:true})
+  assert.equal(f.sent.length,0)
+  f.data.items.push({id:`${sourceId}:new`,title:'新通知',notifyEligible:true},
+    {id:`${sourceId}:filtered`,title:'不匹配学园',notifyEligible:false})
+  await f.monitor.poll()
+  await f.monitor.poll()
+  assert.deepEqual(f.sent.map(row=>[row.channelId,row.body]),[[`src-${sourceId}`,'新通知']])
+ })
+}

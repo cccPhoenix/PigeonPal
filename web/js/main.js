@@ -131,7 +131,10 @@ function setView(view, { acknowledge = true } = {}) {
   $('pane-calendar').hidden = view !== 'calendar'
   $('pane-user-profile').hidden = view !== 'user-profile'
   if (view === 'calendar') calendar.render()
-  if (view === 'user-profile' && !profilePage) profilePage = showUserProfile({ root: $('pane-user-profile'), client: apiClient, onChange: refreshProfileViews })
+  if (view === 'user-profile' && !profilePage) profilePage = showUserProfile({
+    root: $('pane-user-profile'), client: apiClient, onChange: refreshProfileViews,
+    onLoad: snapshot => academySelection.refresh(snapshot),
+  })
   if (view === 'notice' || view === 'homework') rail.setView(view)
   dock.setView(view)
   if (narrowChat()) toggleChat(false)

@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { cleanRecommendation, noticeKept, noticePushable, deliveryTransition, orderRecommended } from '../web/js/services/recommendations.js'
 import { createStore, hydrate } from '../web/js/store.js'
+import { createAcademySelection } from '../web/js/services/academy-selection.js'
 import { localAdapters, startFeed } from '../web/js/services/sources.js'
 import { createApiClient, ApiError } from '../web/js/services/api.js'
 import { createAIChat, buildChatHistory } from '../web/js/services/chat.js'
@@ -321,4 +322,38 @@ test('student numbers are redacted before chat storage and while restoring legac
   assert.equal(written.includes(number), false)
   const legacy = JSON.parse(written); legacy.messages.bot[0].text = `我的学号是${number}`
   assert.equal(JSON.stringify(hydrate(legacy)).includes(number), false)
+})
+
+
+test('successful profile reads recover academy filtering after startup failure without saving', async () => {
+  const originalDocument = globalThis.document, page = profilePageDocument()
+  const store = createStore(null), list = { innerHTML: '', addEventListener() {} }
+  for (const source of ['yunfeng', 'danyang', 'lantian']) store.upsertNotice(`src-${source}`, row(source, null, { sourceId: source, real: false }))
+  const rail = createRail({ listRoot: list, detailRoot: { innerHTML: '', addEventListener() {} }, store, client: {} })
+  let available = false, saved = { version: 3, academy: 'danyang', facts: {}, preferences: {} }, mutations = 0
+  const client = { userProfile: async () => {
+    if (!available) throw new ApiError('service_unavailable')
+    return saved
+  } }
+  const selection = createAcademySelection({ client, onChange: rail.setAcademy })
+  assert.equal(await selection.refresh(), false)
+  assert.equal(selection.academy, '')
+  available = true
+  globalThis.document = page.document
+  let mounted
+  try {
+    mounted = openUserProfile({ root: page.root, client,
+      onLoad: snapshot => selection.refresh(snapshot), onChange: () => { mutations++ } })
+    await tick()
+    assert.equal(selection.academy, 'danyang')
+    assert.match(list.innerHTML, /data-notice="danyang"/)
+    assert.doesNotMatch(list.innerHTML, /data-notice="yunfeng"/)
+    saved = { ...saved, version: 4, academy: 'lantian' }
+    page.root.listeners.click({ target: { closest: () => ({ dataset: { profile: 'reload' } }) } })
+    await tick()
+    assert.equal(selection.academy, 'lantian')
+    assert.match(list.innerHTML, /data-notice="lantian"/)
+    assert.doesNotMatch(list.innerHTML, /data-notice="danyang"/)
+    assert.equal(mutations, 0, 'reads must not trigger the save/recommendation-refresh callback')
+  } finally { mounted?.destroy(); globalThis.document = originalDocument }
 })

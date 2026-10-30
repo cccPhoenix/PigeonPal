@@ -19,6 +19,7 @@ function railDOM() {
         const button = { dataset: { view }, badge: null,
           setAttribute: (key, value) => attrs.set(key, value), removeAttribute: key => attrs.delete(key),
           getAttribute: key => attrs.get(key),
+          querySelector(selector) { return selector === '.badge' ? this.badge : null },
           insertAdjacentHTML(_where, value) {
             this.badge = { textContent: value.match(/>([^<]+)</)[1], remove: () => { this.badge = null } }
           },
@@ -53,6 +54,11 @@ test('badge polling and view switching preserve sidebar identity and animation',
   assert.equal(root.querySelector('[data-view="calendar"]').getAttribute('aria-current'), 'page')
   assert.equal(root.querySelector('[data-view="notice"] .badge').textContent, '3')
   assert.equal(root.querySelector('[data-view="chat"] .badge'), null)
+  dock.setUnread(100)
+  assert.equal(root.querySelector('[data-view="notice"] .badge').textContent, '99+')
+  dock.setUnread(0)
+  assert.equal(root.querySelector('[data-view="notice"] .badge'), null)
+  assert.equal(root.writes, 1)
 })
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 260))

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from http.client import HTTPException
+
 from email.utils import parsedate_to_datetime
 import random
 import time
@@ -179,7 +181,7 @@ class SlowClient:
                     ):
                         raise CrawlFailure("auth_required")
                     return html, current
-            except (URLError, TimeoutError, OSError):
+            except (HTTPException, URLError, TimeoutError, OSError):
                 # Never stringify an exception: URLs, ticket or proxy credentials
                 # could otherwise become part of console/state-file output.
                 raise CrawlFailure("network_error") from None

@@ -7,7 +7,7 @@ python -m pip install -r requirements.txt
 python scripts/serve.py
 ```
 
-也可用 `npm run dev` 启动同一个服务。打开 http://127.0.0.1:4174；服务只监听本机，同时运行 UI、认证 API 和四站持续爬虫（云峰、ITC、求是学院、本科生院）。其中仅 ITC 需要校园认证。按 Ctrl+C 停止。
+也可用 `npm run dev` 启动同一个服务。打开 http://127.0.0.1:4174；服务只监听本机，同时运行 UI、认证 API 和七个来源的持续采集（云峰、丹阳青溪、蓝田、ITC、求是学院、本科生院、学在浙大）。其中 ITC 和学在浙大需要校园认证。按 Ctrl+C 停止。
 
 ## 绑定与使用
 
