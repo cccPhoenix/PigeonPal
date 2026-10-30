@@ -33,11 +33,65 @@ class UserProfileTests(unittest.TestCase):
         self.assertEqual(snapshot["version"], 0)
         self.assertIsNone(snapshot["updatedAt"])
         self.assertIsNone(snapshot["grade"])
+        self.assertEqual(snapshot["academy"], "")
         self.assertEqual(set(snapshot["facts"]), {"degree", "admissionYear", "college", "major"})
         self.assertFalse(self.store.needs_personalization())
         self.assertEqual(self.store.model_context(), {"version": 0, "facts": {},
                                                      "preferences": {"interests": [], "avoid": []}})
         self.assertFalse(self.path.parent.exists())
+
+    def test_legacy_profile_without_academy_loads_without_rewriting_and_preserves_facts(self):
+        original = self.store.update({"facts": {"degree": {"value": "undergraduate"}},
+                                      "preferences": {"interests": ["奖学金"]}})
+        legacy = json.loads(self.path.read_text(encoding="utf-8"))
+        legacy.pop("academy")
+        content = json.dumps(legacy, ensure_ascii=False).encode("utf-8")
+        self.path.write_bytes(content)
+        restored = UserProfileStore(self.path)
+        snapshot = restored.snapshot()
+        self.assertEqual(snapshot["academy"], "")
+        self.assertEqual(snapshot["version"], original["version"])
+        self.assertEqual(snapshot["facts"], original["facts"])
+        self.assertEqual(snapshot["preferences"], original["preferences"])
+        self.assertNotIn("storageError", snapshot)
+        self.assertEqual(self.path.read_bytes(), content)
+        selected = restored.update({"academy": "danyang", "expectedVersion": original["version"]})
+        self.assertEqual(selected["version"], original["version"] + 1)
+        self.assertEqual(selected["facts"], original["facts"])
+
+    def test_academy_persists_versions_partial_updates_and_stays_out_of_models(self):
+        version = 0
+        for academy in ["yunfeng", "danyang", "lantian", ""]:
+            snapshot = self.store.update({"academy": academy, "expectedVersion": version})
+            version += 1
+            self.assertEqual((snapshot["academy"], snapshot["version"]), (academy, version))
+            self.assertEqual(UserProfileStore(self.path).snapshot(), snapshot)
+            self.assertNotIn("academy", self.store.model_context())
+            self.assertFalse(self.store.needs_personalization())
+            self.assertEqual(self.store.update({"academy": academy}), snapshot)
+        selected = self.store.update({"academy": "danyang"})
+        changed = self.store.update({"preferences": {"interests": ["活动"]}})
+        self.assertEqual(changed["academy"], "danyang")
+        self.assertEqual(changed["version"], selected["version"] + 1)
+        self.assert_code("profile_version_conflict", self.store.update,
+                         {"academy": "lantian", "expectedVersion": selected["version"]})
+
+    def test_invalid_academy_rejected_without_replacing_profile(self):
+        first = self.store.update({"academy": "yunfeng"})
+        content = self.path.read_bytes()
+        for academy in [None, True, 1, [], {}, "itc", "DANYANG", "丹阳青溪学园", "lantian "]:
+            with self.subTest(academy=academy):
+                self.assert_code("profile_invalid", self.store.update, {"academy": academy})
+                self.assertEqual(self.path.read_bytes(), content)
+                self.assertEqual(self.store.snapshot(), first)
+
+    def test_clear_restores_all_academies_in_both_profile_files(self):
+        selected = self.store.update({"academy": "danyang"})
+        cleared = self.store.clear(expected_version=selected["version"])
+        self.assertEqual(cleared["academy"], "")
+        self.assertEqual(cleared["version"], selected["version"] + 1)
+        for path in [self.path, self.store.backup_path]:
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["academy"], "")
 
     def test_confirmed_facts_and_open_preferences_round_trip(self):
         snapshot = self.store.update({

@@ -5,7 +5,7 @@ import { noticeUnreadCount } from '../services/notice-list.js'
 
 // The icon rail: 小浙's identity plus the view switcher. Labels expand on hover so the
 // rail can stay narrow without turning into a strip of anonymous glyphs.
-export function createIconRail({ root, store, onView, onBot, onHomework, onMe, onAddSource, onSearch }) {
+export function createIconRail({ root, store, onView, onBot, onHomework, onMe, onAddSource, onSearch, academy = () => '' }) {
   let view = 'notice'
   let unread = 0
   let chatUnread = 0
@@ -76,11 +76,11 @@ ${btn({ id: 'me', label: '我的设置', html: `<span class="dock-me">${escapeHt
 
   // Source reads, feed updates and trash actions all update the bell directly;
   // it must not depend on a later view change or transcript render.
-  const syncNoticeBadge = () => setUnread(noticeUnreadCount(store.state))
+  const syncNoticeBadge = () => setUnread(noticeUnreadCount(store.state, null, academy()))
   store.on('unread', syncNoticeBadge)
   store.on('notice', syncNoticeBadge)
   store.on('notice-meta', syncNoticeBadge)
-  unread = noticeUnreadCount(store.state)
+  unread = noticeUnreadCount(store.state, null, academy())
 
   root.addEventListener('click', e => {
     const b = e.target.closest('[data-view]')

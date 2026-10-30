@@ -12,6 +12,7 @@ from yunfeng_html import parse_article as yunfeng_article, parse_list as yunfeng
 from itc_html import parse_article as itc_article, parse_list as itc_list
 from qsxy_html import parse_article as qsxy_article, parse_list as qsxy_list
 from bksy_html import parse_article as bksy_article, parse_list as bksy_list
+from academy_html import parse_article as academy_article, parse_danyang_list, parse_lantian_list
 
 from .http import CrawlFailure, has_sensitive_query, notice_url
 from .homework_contract import homework_url, normalize_homework
@@ -35,6 +36,10 @@ SOURCES = {
     "yunfeng": Source("yunfeng", "https://yunfeng.zju.edu.cn/on/53544/list.psp",
                       "yunfeng.zju.edu.cn", False, yunfeng_list, yunfeng_article,
                       title="云峰学园·通知公告"),
+    "danyang": Source("danyang", "https://dqxy.zju.edu.cn/51432/list.htm", "dqxy.zju.edu.cn", False,
+                      parse_danyang_list, academy_article, title="丹阳青溪学园·最新通知"),
+    "lantian": Source("lantian", "http://lantian.zju.edu.cn/ltoffice/main.htm", "lantian.zju.edu.cn", False,
+                      parse_lantian_list, academy_article, title="蓝田学园·通知公告", allow_http=True),
     "itc": Source("itc", "https://itc.zju.edu.cn/90618/list.psp",
                   "itc.zju.edu.cn", True, itc_list, itc_article,
                   title="信息技术中心·通知公告"),

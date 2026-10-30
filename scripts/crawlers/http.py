@@ -20,6 +20,7 @@ MAX_DELAY = 30.0
 MAX_HTML_BYTES = 1024 * 1024
 MAX_RETRY_AFTER = 86400.0
 PUBLIC_HTTP_HOST = "qsxy.zju.edu.cn"
+PUBLIC_HTTP_HOSTS = frozenset({PUBLIC_HTTP_HOST, "lantian.zju.edu.cn"})
 SENSITIVE_QUERY_KEYS = {
     "ticket", "token", "access_token", "id_token", "refresh_token",
     "authorization", "password", "passwd", "username", "session",
@@ -45,13 +46,13 @@ def has_sensitive_query(url: str) -> bool:
 
 
 def notice_url(url: str, host: str, *, allow_http: bool = False) -> str:
-    """Validate a same-site URL, with HTTP allowed only for public QSXY pages.
+    """Validate a same-site URL; public QSXY and Lantian may opt into HTTP.
 
-    Other sources keep their existing HTTPS upgrade. An opted-in QSXY source
+    Other sources keep their existing HTTPS upgrade. An opted-in public source
     preserves the incoming scheme so HTTPS redirects are never downgraded.
     """
     try:
-        if allow_http and host != PUBLIC_HTTP_HOST:
+        if allow_http and host not in PUBLIC_HTTP_HOSTS:
             raise CrawlFailure("invalid_notice_url")
         parsed = urlsplit(url)
         if (
@@ -91,7 +92,7 @@ class SlowClient:
         *, allow_http: bool = False, opener: OpenerDirector | None = None, monotonic=time.monotonic,
         sleep=time.sleep, wall_time=time.time, choose_delay=random.uniform,
     ):
-        if allow_http and (host != PUBLIC_HTTP_HOST or protected or session is not None):
+        if allow_http and (host not in PUBLIC_HTTP_HOSTS or protected or session is not None):
             raise CrawlFailure("invalid_transport_policy")
         self.host = host
         self.protected = protected

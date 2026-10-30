@@ -27,7 +27,7 @@ test('existing four-source users automatically gain the authenticated homework c
   assert.equal(channel.every, '每 5 分钟')
   assert.deepEqual(state.messages[channel.id], [])
   assert.equal(state.channels.find(channel => channel.sourceId === 'itc').notify, 'mute')
-  assert.equal(LOCAL_CHANNELS.length, 5)
+  assert.equal(LOCAL_CHANNELS.length, 7)
 })
 
 test('homework adapter displays official structured data without model analysis', async () => {

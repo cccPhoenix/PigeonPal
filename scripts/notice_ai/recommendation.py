@@ -14,12 +14,14 @@ import time
 
 from crawlers.storage import _atomic_replace
 from .schema import AIError, prepare_notice, redact_text
+from .user_profile import ACADEMIES
 
 
 POLICY_VERSION = "profile-relevance-v1"
 DEGREES = {"undergraduate", "master", "doctor", "postgraduate", "staff", "other"}
 DECISIONS = {"recommended", "uncertain", "not_applicable"}
 FACT_KEYS = {"degree", "admissionYear", "college", "major", "campus"}
+ACADEMY_NAMES = {"yunfeng": "云峰学园", "danyang": "丹阳青溪学园", "lantian": "蓝田学园"}
 RECOMMENDATION_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "required": ["decision", "priority", "reason", "eligibility"],
@@ -298,6 +300,10 @@ class RecommendationService:
                 context = model_profile(self.profiles.model_context())
             if not isinstance(snapshot, dict) or snapshot.get("version") != context["version"]:
                 raise AIError("profile_storage_error")
+            academy = snapshot.get("academy", "")
+            if not isinstance(academy, str) or academy not in ACADEMIES:
+                raise AIError("profile_storage_error")
+            context["academy"] = academy
             facts = snapshot.get("facts", {})
             for key in ("degree", "admissionYear"):
                 fact = facts.get(key) if isinstance(facts, dict) else None
@@ -316,6 +322,11 @@ class RecommendationService:
         return bool(row and row.get("fingerprint") == fingerprint and row.get("profileVersion") == version
                     and row.get("policyVersion") == POLICY_VERSION)
 
+    @staticmethod
+    def _academy_excluded(notice, profile):
+        academy = profile.get("academy")
+        return bool(academy and notice.get("sourceId") in ACADEMY_NAMES and notice["sourceId"] != academy)
+
     def view(self, notice, fingerprint):
         with self.lock:
             profile = self._profile()
@@ -328,6 +339,15 @@ class RecommendationService:
                       "evidence": [], "profileVersion": version, "override": override, "error": None}
             if local:
                 result["reason"] = "作业仅在本地处理，照常保留。"
+                return result
+            if not profile.get("profileError") and self._academy_excluded(notice, profile):
+                # This is a local, explicit source choice, independent of model
+                # matching or its cache. Raw notices remain available unchanged.
+                result.update(state="ready", decision="not_applicable", allowPush=False, priority=0,
+                              reason=f"你已选择{ACADEMY_NAMES[profile['academy']]}，此学园的通知仍可在全部通知中查看。")
+                if override == "keep":
+                    result.update(decision="recommended", allowPush=True, priority=100,
+                                  reason="你已选择保留推荐，此条通知继续推送。")
                 return result
             error = profile.get("profileError") or self.storage_error
             if error:
@@ -360,6 +380,8 @@ class RecommendationService:
             profile = self._profile()
             if profile.get("profileError"):
                 return False
+            if self._academy_excluded(notice, profile):
+                return False
             if not profile["facts"] and not any(profile["preferences"].values()):
                 return False
             if self.overrides.get(notice["id"]) == "keep":
@@ -376,7 +398,7 @@ class RecommendationService:
             profile = self._profile()
             if profile.get("profileError"):
                 raise AIError("profile_storage_error", 503)
-            result = {"profile": profile, "analysis": copy.deepcopy(analysis)}
+            result = {"profile": model_profile(profile), "analysis": copy.deepcopy(analysis)}
             row = self.items.get(notice["id"])
             if row and row.get("fingerprint") == fingerprint and row.get("policyVersion") == POLICY_VERSION and row.get("raw"):
                 result["eligibility"] = copy.deepcopy(row["raw"]["eligibility"])

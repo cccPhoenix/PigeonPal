@@ -6,6 +6,7 @@ import { toast } from './overlays.js'
 import { cleanHomework, homeworkDetailHTML, homeworkTime, isHomeworkCard } from '../services/homework.js'
 import { cleanRecommendation, recommendationLabel, evidenceText } from '../services/recommendations.js'
 import { NOTICE_SORTS, noticeChannels, noticeUnreadCount, noticeDeleted, noticeCategory, selectNotices } from '../services/notice-list.js'
+import { cleanAcademy, academySourceVisible } from '../services/academy-selection.js'
 
 // The notice view: crawled notices, typeset rather than chatted. The list pane groups by
 // day and filters by source; the detail pane is a key/value table fed by the list plus the
@@ -18,7 +19,7 @@ const ANALYSIS_STATE = {
 const FETCH_STATE = { complete: '正文已采集', pending: '正文排队中', skipped: '仅保存链接', failed: '采集失败' }
 
 const cacheKey = n => `${n.noticeId}:${n.revision ?? ''}`
-const SOURCE_ICONS = { yunfeng: 'school', itc: 'computer', qsxy: 'graduate', bksy: 'book' }
+const SOURCE_ICONS = { yunfeng: 'school', danyang: 'school', lantian: 'school', itc: 'computer', qsxy: 'graduate', bksy: 'book' }
 const sourceIcon = sourceId => icon(SOURCE_ICONS[sourceId] ?? 'bell', 17)
 // Detail-endpoint URLs are not run through store.cleanItem, so pin the scheme here.
 const safeHref = url => (/^https?:\/\//.test(url ?? '') ? escapeHtml(url) : '')
@@ -26,6 +27,7 @@ const safeHref = url => (/^https?:\/\//.test(url ?? '') ? escapeHtml(url) : '')
 export function createRail({ listRoot, detailRoot, store, client, onRemind, onAttach, onRead }) {
   let view = 'notice'
   let filter = null
+  let academy = ''
   let recommendationMode = 'recommended'
   let trash = false
   let selected = null
@@ -49,11 +51,11 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
 
   function chipsHTML() {
     const chip = (src, label, on, unread) => `<button class="pill${on ? ' on' : ''}" data-rail="filter" data-src="${escapeHtml(src)}" aria-pressed="${on}">${label}${unread ? `<span class="badge">${unread > 99 ? '99+' : unread}</span>` : ''}</button>`
-    const sources = noticeChannels(store.state)
-    const total = trash ? 0 : noticeUnreadCount(store.state)
+    const sources = noticeChannels(store.state, academy)
+    const total = trash ? 0 : noticeUnreadCount(store.state, null, academy)
     return [chip('', '全部', !filter, total),
       ...sources.map(c => chip(
-        c.sourceId, `${sourceIcon(c.sourceId)}${escapeHtml(c.title)}`, filter === c.sourceId, trash ? 0 : noticeUnreadCount(store.state, c.sourceId),
+        c.sourceId, `${sourceIcon(c.sourceId)}${escapeHtml(c.title)}`, filter === c.sourceId, trash ? 0 : noticeUnreadCount(store.state, c.sourceId, academy),
       ))].join('')
   }
 
@@ -142,7 +144,7 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
 
   function renderList() {
     if (view === 'homework') return renderHomeworkList()
-    const all = selectNotices(store.state, { sourceId: filter, mode: recommendationMode, trash })
+    const all = selectNotices(store.state, { sourceId: filter, mode: recommendationMode, trash, academy })
     const rows = []
     let lastGroup = null
     for (const n of all) {
@@ -153,7 +155,7 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
       rows.push(itemHTML(n))
     }
     if (selected && !all.some(n => n.noticeId === selected)) { selected = null; renderDetail(); syncPaneAttr() }
-    const trashCount = Object.keys(store.state.noticeMeta).filter(id => noticeDeleted(store.state, id) && store.notice(id)).length
+    const trashCount = Object.keys(store.state.noticeMeta).filter(id => noticeDeleted(store.state, id) && store.notice(id) && academySourceVisible(store.notice(id).sourceId, academy)).length
     const options = Object.entries(NOTICE_SORTS).map(([key, label]) => `<option value="${key}"${store.state.noticeSort === key ? ' selected' : ''}>${label}</option>`).join('')
     repaint(listRoot, `<div class="rail-top">
   <span class="rail-head">${trash ? '通知回收站' : '通知'}</span><button class="pill" data-rail="trash" aria-pressed="${trash}">${icon(trash ? 'chevron' : 'trash', 15)}${trash ? '返回通知' : `回收站${trashCount ? ` · ${trashCount}` : ''}`}</button>
@@ -254,15 +256,22 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
   }
 
   function setFilter(sourceId) {
-    filter = sourceId || null
+    filter = academySourceVisible(sourceId, academy) ? sourceId || null : null
     renderList()
     syncPaneAttr()
     if (!trash) onRead?.(filter)
   }
 
+  function setAcademy(value) {
+    academy = cleanAcademy(value)
+    if (!academySourceVisible(filter, academy)) filter = null
+    if (selected && !academySourceVisible(store.notice(selected)?.sourceId, academy)) selected = null
+    render()
+  }
+
   function openNotice(noticeId) {
     const n = store.notice(noticeId)
-    if (!n) { selected = null; renderList(); renderDetail(); return syncPaneAttr() }
+    if (!n || !academySourceVisible(n.sourceId, academy)) { selected = null; renderList(); renderDetail(); return syncPaneAttr() }
     const switching = Boolean(selected && selected !== noticeId)
     selected = noticeId
     renderList()
@@ -317,6 +326,11 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
   function reveal(noticeId) {
     const n = store.notice(noticeId)
     if (!n) return
+    if (!academySourceVisible(n.sourceId, academy)) {
+      filter = null
+      selected = null
+      return render()
+    }
     filter = n.sourceId || null
     trash = noticeDeleted(store.state, noticeId)
     if (n.recommendation?.allowPush === false) recommendationMode = 'all'
@@ -468,7 +482,8 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
   })
 
   return {
-    render, renderList, renderDetail, setView, setFilter, setTrash, openNotice, openHomework, back, reveal, onNotice, patchRemindPill,
+    render, renderList, renderDetail, setView, setFilter, setAcademy, setTrash, openNotice, openHomework, back, reveal, onNotice, patchRemindPill,
+    get academy() { return academy },
     get filter() { return filter },
     get trash() { return trash },
     get homeworkCourse() { return homeworkCourse },

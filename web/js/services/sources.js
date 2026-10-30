@@ -155,6 +155,8 @@ export function localAdapters(client) {
 // Stable channels for the local crawler; these are never fed by demo adapters.
 export const LOCAL_CHANNELS = [
   { id: 'src-yunfeng', sourceId: 'yunfeng', title: '云峰通知', emoji: '🏫', tint: '#eef3ee', site: 'yunfeng.zju.edu.cn', url: 'https://yunfeng.zju.edu.cn/on/53544/list.psp', every: '每 5 分钟', requiresAuth: false },
+  { id: 'src-danyang', sourceId: 'danyang', title: '丹阳青溪学园', emoji: '🏫', tint: '#edf5ef', site: 'dqxy.zju.edu.cn', url: 'https://dqxy.zju.edu.cn/51432/list.htm', every: '每 5 分钟', requiresAuth: false },
+  { id: 'src-lantian', sourceId: 'lantian', title: '蓝田学园', emoji: '🏫', tint: '#eaf2ff', site: 'lantian.zju.edu.cn', url: 'http://lantian.zju.edu.cn/ltoffice/main.htm', every: '每 5 分钟', requiresAuth: false },
   { id: 'src-itc', sourceId: 'itc', title: 'ITC 通知', emoji: '💻', tint: '#eaf2ff', site: 'itc.zju.edu.cn', url: 'https://itc.zju.edu.cn/90618/list.psp', every: '每 5 分钟', requiresAuth: true },
   { id: 'src-qsxy', sourceId: 'qsxy', title: '求是学院通知', emoji: '🎓', tint: '#fff1e5', site: 'qsxy.zju.edu.cn', url: 'http://qsxy.zju.edu.cn/30845/list.psp', every: '每 5 分钟', requiresAuth: false },
   { id: 'src-bksy', sourceId: 'bksy', title: '本科生院通知', emoji: '📚', tint: '#f0ecff', site: 'bksy.zju.edu.cn', url: 'https://bksy.zju.edu.cn/28418/list.htm', every: '每 5 分钟', requiresAuth: false },
