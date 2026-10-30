@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from contextlib import ExitStack
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from socketserver import TCPServer
 import hmac
 import hashlib
 import json
@@ -345,6 +346,14 @@ class LocalBackend:
 
 
 class LocalServer(ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer resolves getfqdn() even for literal loopback addresses. Some
+        # macOS networks stall that reverse lookup before the ready handshake.
+        # This private server never needs a DNS-derived hostname.
+        TCPServer.server_bind(self)
+        self.server_name = self.server_address[0]
+        self.server_port = self.server_address[1]
+
     daemon_threads = True
     # The desktop protocol proxy loads the module graph concurrently. The
     # socketserver default backlog of five can reset those local connections.
