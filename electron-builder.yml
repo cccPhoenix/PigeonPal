@@ -3,6 +3,13 @@ productName: 鸽友 PigeonPal
 executableName: PigeonPal
 artifactName: PigeonPal-Setup-${version}-${arch}.${ext}
 asar: true
+publish:
+  provider: github
+  owner: cccPhoenix
+  repo: PigeonPal
+  releaseType: release
+  vPrefixedTagName: true
+electronUpdaterCompatibility: '>=6.8.12 <7'
 directories:
   output: dist
   buildResources: build

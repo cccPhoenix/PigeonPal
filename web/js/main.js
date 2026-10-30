@@ -1,4 +1,6 @@
 import { connectDesktop } from './services/desktop.js'
+import { desktopUpdates } from './services/desktop-updates.js'
+import { createUpdateBanner } from './ui/updates.js'
 import { createStore } from './store.js'
 import { newId, pendingReminders } from './reminders.js'
 import { markHTML, setMarkState, startGaze } from './mark/index.js'
@@ -39,6 +41,8 @@ const services = {
 const store = createStore()
 const $ = id => document.getElementById(id)
 const app = $('app')
+window.addEventListener('pigeonpal:save-state', event => { if (!store.flush()) event.preventDefault() })
+window.addEventListener('beforeunload', () => store.flush())
 const identityClient = createAuthClient()
 const sourceStates = new Map()
 const localSourceIds = new Set(LOCAL_CHANNELS.map(channel => channel.sourceId))
@@ -472,6 +476,7 @@ function openMeMenu(anchor) {
 <button class="mi" data-go="auth">${icon('key', 16)}身份认证</button>
 <button class="mi" data-go="api">${icon('settings', 16)}API 设置</button>
 <button class="mi" data-go="look">${icon('image', 16)}外观</button>
+<button class="mi" data-go="updates">${icon('restore', 16)}软件更新</button>
 <div class="pop-sep"></div>
 <button class="mi" data-go="about">${icon('settings', 16)}关于与重置</button>`, { place: 'above' })
   pop.style.left = `${anchor.getBoundingClientRect().left}px`
@@ -651,6 +656,9 @@ async function refreshRuntime() {
 
 // ------------------------------------------------------------------- boot
 connectDesktop(store, select)
+createUpdateBanner({ root: $('update-banner'), client: desktopUpdates,
+  onOpen: opener => openSettings(settingsApi, { page: 'updates', opener }) })
+desktopUpdates.connect().catch(() => {})
 applyPrefs()
 watchNoticeWidth(noticeView)
 dock.render()

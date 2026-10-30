@@ -14,10 +14,13 @@
 
 ## 数据与更新
 
+0.4.0 起提供「设置 → 软件更新」：默认启动后及每 24 小时检查正式新版本，可关闭自动检查，手动检查不受影响。Windows 经用户点击下载、校验后重启安装；Mac 当前提供官方 DMG 下载入口。日常 main 提交不会直接进入用户电脑，正式版本通过标签触发构建验收后发布。见[软件更新与发布](updates.md)。
+
 桌面数据根目录：Windows 为 `%APPDATA%\PigeonPal`，macOS 为 `~/Library/Application Support/PigeonPal`。
 - `data/`：通知、提醒、模型整理缓存。
 - `auth/`：本机加密校园凭据与 API 配置，不可向他人分发。
 - `desktop-notifications.json`：通知去重 ID 和免打扰偏好，不保存通知正文。
+- `desktop-updates.json`：自动检查更新开关与上次成功检查时间。
 - `Partitions/pigeonpal/`：界面记录和偏好（Chromium 持久 session）。
 
 升级安装不会删除数据；卸载默认也保留用户数据。如需换电脑，请分别管理凭据与普通数据，勿将整个用户目录加入仓库或公开备份。Windows 桌面版与开发网页版默认数据目录不同；macOS 的通知/提醒 data 目录可能与原网页服务共用，写入锁会阻止它们同时运行。桌面认证目录为上述根目录下的 auth，旧网页版的 ~/.pigeonpal/auth 不会自动复制，首次桌面使用可能需重新绑定。界面记录属于新的固定来源，安装包始终不携带任何开发者私有数据。
@@ -49,7 +52,7 @@ python build/smoke_desktop.py dist/win-unpacked/PigeonPal.exe dist/desktop-self-
 
 `build/smoke_windows.ps1` 会静默安装并修改该用户的应用注册，只在一次性 Windows VM / runner 执行。本机非 runner 必须显式传入 `-DisposableMachine`；不要在有个人旧版安装的电脑上无提示运行此安装脚本。
 
-PyInstaller 在当前操作系统冻结 Python，macOS 产物不能作为 Windows exe；构建必须真正运行并通过，不能只靠 workflow 配置文件宣称安装包完成。v0.3.1 已在 Windows x64 本机依次运行 `npm ci`、`python -m pip install -r requirements-build.txt`、两套测试、`npm run dist:win` 和两个 smoke，详见[本次 Windows 验收记录](windows-0.3.1-acceptance.md)。`build/windows-workflow.yml` 保留为未启用模板；当前没有活动 Windows Actions 工作流，不需要为了本机打包补充 workflow 权限。
+PyInstaller 在当前操作系统冻结 Python，macOS 产物不能作为 Windows exe；构建必须真正运行并通过，不能只靠 workflow 配置文件宣称安装包完成。v0.3.1 的原生 Windows 构建记录见[Windows 验收记录](windows-0.3.1-acceptance.md)。旧 `build/windows-workflow.yml` 仅为历史模板；0.4.0 新增 `.github/workflows/release.yml`，以正式版本标签触发双平台构建、验收和发布，手动触发默认仅构建，显式勾选 publish_release 才发布。
 
 Windows 构建暂未接入发布者代码签名证书；第一版按内部试用包分发，不宣称已签名或已通过系统信誉检查。为同学大规模发布前，需完成下面实际验收。
 
