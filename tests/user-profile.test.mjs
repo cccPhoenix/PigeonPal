@@ -35,7 +35,8 @@ function profilePageDocument() {
 
 test('academy source choice is saved with the profile version and read back from the service', async () => {
   const originalDocument = globalThis.document
-  let saved = { version: 4, academy: 'yunfeng', facts: {}, preferences: {} }, changed = 0
+  let saved = { version: 4, academy: 'yunfeng', facts: {}, preferences: {} }
+  const changes = []
   const requests = []
   const client = {
     userProfile: async () => saved,
@@ -49,30 +50,33 @@ test('academy source choice is saved with the profile version and read back from
   globalThis.document = page.document
   let mounted
   try {
-    mounted = openUserProfile({ root: page.root, client, onChange: () => changed++ })
+    mounted = openUserProfile({ root: page.root, client, onChange: snapshot => changes.push(snapshot) })
     await tick()
-    assert.match(page.body.innerHTML, /<label for="up-academy">所属学园<\/label>/)
-    assert.match(page.body.innerHTML, /value="yunfeng" selected/)
-    assert.match(page.body.innerHTML, /value="danyang"/)
-    assert.match(page.body.innerHTML, /value="lantian"/)
+    assert.match(page.body.innerHTML, /for="up-academy">所属学园<\/label>/)
+    assert.match(page.body.innerHTML, /data-academy-option="yunfeng" aria-selected="true"/)
+    assert.match(page.body.innerHTML, /data-academy-option="danyang"/)
+    assert.match(page.body.innerHTML, /data-academy-option="lantian"/)
     assert.doesNotMatch(page.body.innerHTML, /data-confirm="academy"/)
     page.academy.value = 'danyang'
     page.root.listeners.submit({ target: { matches: () => true }, preventDefault() {} })
     await tick()
     assert.equal(requests[0].expectedVersion, 4)
     assert.equal(requests[0].academy, 'danyang')
-    assert.equal(changed, 1)
-    assert.match(page.body.innerHTML, /value="danyang" selected/)
+    assert.equal(changes.length, 1)
+    assert.equal(changes[0], saved)
+    assert.equal(changes[0].academy, 'danyang')
+    assert.equal(changes[0].version, 5)
+    assert.match(page.body.innerHTML, /data-academy-option="danyang" aria-selected="true"/)
     mounted.destroy()
     mounted = openUserProfile({ root: page.root, client })
     await tick()
-    assert.match(page.body.innerHTML, /value="danyang" selected/)
+    assert.match(page.body.innerHTML, /data-academy-option="danyang" aria-selected="true"/)
     page.academy.value = ''
     page.root.listeners.submit({ target: { matches: () => true }, preventDefault() {} })
     await tick()
     assert.equal(requests[1].expectedVersion, 5)
     assert.equal(requests[1].academy, '')
-    assert.match(page.body.innerHTML, /<option value="">全部学园<\/option>/)
+    assert.match(page.body.innerHTML, /data-academy-option="" aria-selected="true"/)
   } finally { mounted?.destroy(); globalThis.document = originalDocument }
 })
 
@@ -95,6 +99,39 @@ test('inline profile renders in its host and releases handlers and data on view 
     assert.equal(page.root.listeners.submit, undefined)
     assert.equal(page.root.listeners.click, undefined)
   } finally { globalThis.document = originalDocument }
+})
+
+for (const operation of ['save', 'clear']) test(`a late profile ${operation} still updates the app after leaving the profile view`, async () => {
+  const originalDocument = globalThis.document, originalConfirm = globalThis.confirm
+  const page = profilePageDocument(), changes = []
+  const committed = { version: 9, academy: operation === 'save' ? 'danyang' : '', facts: {}, preferences: {} }
+  let finish, mounted
+  const pending = new Promise(resolve => { finish = resolve })
+  const client = {
+    userProfile: async () => ({ version: 8, academy: 'yunfeng', facts: {}, preferences: {} }),
+    saveUserProfile: () => pending, clearUserProfile: () => pending,
+  }
+  globalThis.document = page.document; globalThis.confirm = () => true
+  try {
+    mounted = openUserProfile({ root: page.root, client, onChange: snapshot => changes.push(snapshot) })
+    await tick()
+    if (operation === 'save') {
+      page.academy.value = 'danyang'
+      page.root.listeners.submit({ target: { matches: () => true }, preventDefault() {} })
+    } else page.root.listeners.click({ target: { closest: () => ({ dataset: { profile: 'clear' } }) } })
+    mounted.destroy()
+    page.root.innerHTML = '<p>新的通知视图</p>'
+    page.body.innerHTML = '<p>新的页面内容</p>'
+    const toast = page.document.getElementById('toast')
+    toast.textContent = '原有提示'
+    finish(committed)
+    await tick()
+    assert.deepEqual(changes, [committed])
+    assert.equal(page.root.innerHTML, '<p>新的通知视图</p>')
+    assert.equal(page.body.innerHTML, '<p>新的页面内容</p>')
+    assert.equal(toast.textContent, '原有提示')
+    assert.equal(page.root.listeners.submit, undefined)
+  } finally { mounted?.destroy(); globalThis.document = originalDocument; globalThis.confirm = originalConfirm }
 })
 
 test('read-only profile keeps recovery controls enabled outside its disabled form', async () => {

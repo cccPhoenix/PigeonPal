@@ -23,7 +23,8 @@ import { createApiClient, apiErrorText } from './services/api.js'
 import { openApiSettings as showApiSettings } from './ui/api-settings.js'
 import { openUserProfile as showUserProfile } from './ui/user-profile.js'
 import { noticePushable, deliveryTransition } from './services/recommendations.js'
-import { noticeUnreadCount, noticeDeleted } from './services/notice-list.js'
+import { noticeUnreadCount, noticeDeleted, noticeChannels } from './services/notice-list.js'
+import { createAcademySelection } from './services/academy-selection.js'
 import { popover, dialog, closeOverlay, overlayFor, toast } from './ui/overlays.js'
 import { icon } from './ui/icons.js'
 import { escapeHtml, plain, whenLabel, clock, personalize } from './ui/format.js'
@@ -45,6 +46,10 @@ const localSourceIds = new Set(LOCAL_CHANNELS.map(channel => channel.sourceId))
 let aiStatus = null
 let sourceStatusError = false
 let sourceRefresh = null
+const academySelection = createAcademySelection({ client: apiClient, onChange(academy) {
+  rail.setAcademy(academy)
+  syncBadges()
+} })
 
 async function refreshSourceStates() {
   if (sourceRefresh) return sourceRefresh
@@ -68,6 +73,11 @@ function refreshRecommendations() {
   sourcesFeed.refresh()
   // A profile update can finish while another source request is in flight.
   setTimeout(() => sourcesFeed.refresh(), 800)
+}
+
+function refreshProfileViews(snapshot) {
+  academySelection.refresh(snapshot)
+  refreshRecommendations()
 }
 
 function openUserProfile() {
@@ -116,7 +126,7 @@ function setView(view, { acknowledge = true } = {}) {
   $('pane-calendar').hidden = view !== 'calendar'
   $('pane-user-profile').hidden = view !== 'user-profile'
   if (view === 'calendar') calendar.render()
-  if (view === 'user-profile' && !profilePage) profilePage = showUserProfile({ root: $('pane-user-profile'), client: apiClient, onChange: refreshRecommendations })
+  if (view === 'user-profile' && !profilePage) profilePage = showUserProfile({ root: $('pane-user-profile'), client: apiClient, onChange: refreshProfileViews })
   if (view === 'notice' || view === 'homework') rail.setView(view)
   dock.setView(view)
   if (narrowChat()) toggleChat(false)
@@ -126,6 +136,7 @@ function setView(view, { acknowledge = true } = {}) {
 
 const dock = createIconRail({
   root: $('dock-nav'), store,
+  academy: () => academySelection.academy,
   onView: setView,
   onBot: () => { select('bot'); dock.setView('chat'); if (narrowChat()) toggleChat(true); else composer.focus() },
   onHomework: () => { select('src-xzzd'); setView('homework') },
@@ -146,7 +157,9 @@ const calendar = createCalendar({ root: $('pane-calendar'), store, onAdd: openNe
 
 const narrowChat = () => window.matchMedia('(max-width: 1099px)').matches
 function markNoticeRead(sourceId = null) {
-  store.markNoticesRead(sourceId)
+  for (const channel of noticeChannels(store.state, academySelection.academy)) {
+    if (!sourceId || channel.sourceId === sourceId) store.markRead(channel.id)
+  }
 }
 
 createSplitter({
@@ -163,7 +176,7 @@ function toggleChat(open = app.dataset.chat !== 'open') {
 $('chat-scrim').addEventListener('click', () => toggleChat(false))
 
 function syncBadges() {
-  dock.setUnread(noticeUnreadCount(store.state))
+  dock.setUnread(noticeUnreadCount(store.state, null, academySelection.academy))
   dock.setChatUnread(store.state.unread.bot ?? 0)
   dock.setHomeworkUnread(store.state.unread['src-xzzd'] ?? 0)
 }
@@ -288,7 +301,7 @@ async function run(ch, stream) {
 }
 
 function applyAction(ch, { name, args }) {
-  if (name === 'user-profile.updated') refreshRecommendations()
+  if (name === 'user-profile.updated') refreshProfileViews()
   if (name === 'profile.update') store.setProfile({ nickname: args.nickname })
   if (name === 'reminder.upsert') store.syncReminders([args])
   if (name === 'calendar.upsert') {
@@ -661,6 +674,7 @@ select('bot')
 syncBadges()
 startGaze(document)
 refreshSourceStates()
+academySelection.refresh()
 
 let homeworkSnapshotReady = false
 function receiveNotice(channelId, item, alreadySeen = false) {

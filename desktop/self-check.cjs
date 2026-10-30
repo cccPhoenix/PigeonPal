@@ -28,10 +28,20 @@ async function runSelfCheck({win,api,monitor,show,startedAt,isReady}) {
   monitor.preferences({enabled:false})
   await js("document.querySelector('[data-view=user-profile]').click()")
   await until(()=>js("Boolean(document.querySelector('#user-profile-form'))"))
+  await js("document.querySelector('#up-academy').click()")
+  await until(()=>js("Boolean(document.querySelector('[data-academy-option=\"danyang\"]'))"))
+  await js("document.querySelector('[data-academy-option=\"danyang\"]').click()")
   await js(`document.querySelector('#up-degree').value='undergraduate';
     document.querySelector('[data-confirm=degree]').checked=true;
     document.querySelector('#user-profile-form').requestSubmit()`)
-  await until(async()=>(await api('/api/user-profile')).facts.degree.value==='undergraduate')
+  await until(async()=>{const profile=await api('/api/user-profile');return profile.facts.degree.value==='undergraduate'&&profile.academy==='danyang'})
+  await js("document.querySelector('[data-view=notice]').click()")
+  await until(()=>js(`Boolean(document.querySelector('[data-rail="filter"][data-src="danyang"]'))
+    && !document.querySelector('[data-rail="filter"][data-src="yunfeng"]')
+    && !document.querySelector('[data-rail="filter"][data-src="lantian"]')
+    && Boolean(document.querySelector('[data-rail="filter"][data-src="itc"]'))
+    && Boolean(document.querySelector('[data-rail="filter"][data-src="qsxy"]'))
+    && Boolean(document.querySelector('[data-rail="filter"][data-src="bksy"]'))`))
   await js(`document.querySelector('[data-view=calendar]').click();
     document.querySelector('.calendar-day.today [data-calendar-day]').click();
     document.querySelector('#calendar-new-title').value='安装验收日历';
@@ -56,6 +66,7 @@ async function runSelfCheck({win,api,monitor,show,startedAt,isReady}) {
   await until(()=>js("Boolean(document.querySelector('[data-view=user-profile]'))"))
   await js("document.querySelector('[data-view=user-profile]').click()")
   await until(()=>js("document.querySelector('#up-degree')?.value === 'undergraduate'"))
+  await until(()=>js("document.querySelector('[data-academy]')?.value === 'danyang'"))
   const frames=await js(`(async()=>{
     const times=[];
     for(const view of ['notice','calendar','homework','user-profile','notice','calendar','notice']) {
@@ -74,7 +85,7 @@ async function runSelfCheck({win,api,monitor,show,startedAt,isReady}) {
   assert.equal((await api('/api/reminders')).reminders[0].id,reminder.id)
   assert.equal(await js("typeof window.require"),'undefined')
   return {startupMs,viewSwitchMs:frames.map(Math.round),
-    checks:['empty-profile-and-account','renderer-bootstrap','profile-form-save','reminder-form-save',
+    checks:['empty-profile-and-account','renderer-bootstrap','profile-form-save','academy-dropdown-save','academy-source-filter','reminder-form-save',
       'offline-reminder-while-window-hidden','reopen','calendar-form-save','reload-persistence','view-navigation','context-isolation'],
     nativeNotificationSupported:await js('window.pigeonpalDesktop.notificationStatus().then(value=>value.supported)')}
 }
