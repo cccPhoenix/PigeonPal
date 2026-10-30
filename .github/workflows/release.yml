@@ -1,0 +1,137 @@
+name: Build and release desktop
+
+on:
+  push:
+    tags: ['v[0-9]*']
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: '验证成功后发布此版本（默认只构建）'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            platform: windows
+          - os: macos-15
+            platform: mac
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - name: Verify stable version and release notes
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            node build/release.cjs verify "$GITHUB_REF_NAME"
+          else
+            node build/release.cjs verify
+          fi
+      - run: python -m pip install -r requirements-build.txt
+      - name: Select the configured Python for desktop launcher tests
+        shell: bash
+        run: python -c "import sys; print('PIGEONPAL_PYTHON=' + sys.executable)" >> "$GITHUB_ENV"
+      - name: Verify source backend cold start
+        run: python build/smoke_source.py
+      - run: npm test
+      - run: python -m unittest discover -s tests -p "test_*.py"
+      - name: Verify real Windows update downloads and checksum rejection
+        if: matrix.platform == 'windows'
+        run: npm run test:updates
+      - name: Build Windows
+        if: matrix.platform == 'windows'
+        run: npm run dist:win
+      - name: Build macOS arm64
+        if: matrix.platform == 'mac'
+        run: |
+          python -c "import platform; assert platform.machine() == 'arm64'"
+          npm run dist:mac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Verify frozen Windows backend
+        if: matrix.platform == 'windows'
+        run: python build/smoke_backend.py build/backend-dist/PigeonPalService/PigeonPalService.exe
+      - name: Verify frozen Mac backend
+        if: matrix.platform == 'mac'
+        run: python build/smoke_backend.py build/backend-dist/PigeonPalService/PigeonPalService
+      - name: Verify Windows installation on disposable runner
+        if: matrix.platform == 'windows'
+        run: ./build/smoke_windows.ps1
+      - name: Verify Mac application
+        if: matrix.platform == 'mac'
+        run: |
+          hdiutil verify "dist/PigeonPal-$(node -p 'require("./package.json").version')-mac-arm64.dmg"
+          apps=(dist/mac-arm64/*.app)
+          [[ ${#apps[@]} -eq 1 ]]
+          codesign --verify --deep --strict "${apps[0]}"
+          python build/smoke_desktop.py "${apps[0]}/Contents/MacOS/PigeonPal" dist/desktop-self-check-mac.json
+      - name: Validate and stage only this version's release files
+        run: node build/release.cjs stage ${{ matrix.platform }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.platform }}
+          path: dist/release-*-${{ matrix.platform }}/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+      - name: Publish completed release after both platforms passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require("./package.json").version')"
+          tag="v${version}"
+          if [[ "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" != "$tag" ]]; then
+            echo 'Tag/version mismatch'; exit 1
+          fi
+          mapfile -d '' assets < <(find release-assets -type f -print0)
+          [[ ${#assets[@]} -eq 8 ]]
+          if existing="$(gh release view "$tag" --json isDraft,targetCommitish 2>/dev/null)"; then
+            node -e 'const r=JSON.parse(process.argv[1]); if(!r.isDraft || r.targetCommitish!==process.argv[2]) throw Error("Only the matching unpublished draft can be resumed")' "$existing" "$GITHUB_SHA"
+          else
+            gh release create "$tag" --draft --target "$GITHUB_SHA" \
+              --title "鸽友 v${version}" --notes-file "docs/releases/${version}.md"
+          fi
+          gh release upload "$tag" "${assets[@]}" --clobber
+          gh release view "$tag" --json assets | node -e '
+            const fs=require("fs"),path=require("path"); const remote=JSON.parse(fs.readFileSync(0,"utf8")).assets;
+            const files=process.argv.slice(1); if(remote.length!==files.length) throw Error("Unexpected release assets");
+            for(const file of files) { const asset=remote.find(a=>a.name===path.basename(file));
+              if(!asset || asset.size!==fs.statSync(file).size) throw Error("Release upload incomplete"); }
+          ' "${assets[@]}"
+          gh release edit "$tag" --draft=false --latest

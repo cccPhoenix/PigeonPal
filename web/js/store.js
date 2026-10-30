@@ -244,16 +244,19 @@ export function createStore(storage = globalThis.localStorage) {
   let saveFailed = false
 
   const emit = (event, detail) => { for (const fn of listeners.get(event) ?? []) fn(detail); for (const fn of listeners.get('*') ?? []) fn(event, detail) }
+  const flush = () => {
+    clearTimeout(saveTimer)
+    // The live catalog contains all server metadata so filtered old notices
+    // remain recoverable. Keep only a small warm cache in browser storage;
+    // the next feed restores the complete catalog without loading any body.
+    const notices = { ...state.notices }
+    trimNotices(notices, state.noticeMeta)
+    try { storage?.setItem(STORAGE_KEY, JSON.stringify({ ...state, notices })); saveFailed = false; return true }
+    catch { if (!saveFailed) emit('save-failed'); saveFailed = true; return false }
+  }
   const save = () => {
     clearTimeout(saveTimer)
-    saveTimer = setTimeout(() => {
-      // The live catalog contains all server metadata so filtered old notices
-      // remain recoverable. Keep only a small warm cache in browser storage;
-      // the next feed restores the complete catalog without loading any body.
-      const notices = { ...state.notices }
-      trimNotices(notices, state.noticeMeta)
-      try { storage?.setItem(STORAGE_KEY, JSON.stringify({ ...state, notices })); saveFailed = false } catch { if (!saveFailed) emit('save-failed'); saveFailed = true }
-    }, 200)
+    saveTimer = setTimeout(flush, 200)
   }
 
   return {
@@ -261,6 +264,7 @@ export function createStore(storage = globalThis.localStorage) {
     on(event, fn) { if (!listeners.has(event)) listeners.set(event, new Set()); listeners.get(event).add(fn); return () => listeners.get(event).delete(fn) },
     emit,
     save,
+    flush,
     channel: id => state.channels.find(c => c.id === id),
     message: id => Object.values(state.messages).flat().find(m => m.id === id),
     lastMessage: id => state.messages[id]?.at(-1),

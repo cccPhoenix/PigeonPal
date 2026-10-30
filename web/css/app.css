@@ -13,6 +13,19 @@ input, textarea, select { font: inherit; color: inherit; }
 .ic { flex: none; display: block; }
 [hidden] { display: none !important; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.update-banner { position: fixed; z-index: 35; top: 16px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 32px); padding: 10px 12px 10px 16px; border: .5px solid var(--line-2); border-radius: 14px; background: var(--card); box-shadow: var(--shadow-2); font-size: 13px; }
+.update-banner > span { min-width: 0; overflow-wrap: anywhere; }
+.update-banner .btn, .update-banner .icon-btn { flex: none; }
+.update-version { margin-bottom: 16px; color: var(--ink-2); font-size: 13px; }
+.update-version strong { margin-left: 8px; color: var(--ink); }
+.update-state { margin: 16px 0; font-size: 13px; }
+.update-state p { margin: 4px 0; }
+.update-error { color: var(--danger); }
+.update-progress { width: 100%; height: 8px; accent-color: var(--notice-accent); }
+.update-actions { flex-wrap: wrap; }
+.update-actions .btn { display: inline-flex; align-items: center; gap: 6px; }
+.update-notes-title { margin-top: 24px; font-size: 14px; }
+.update-notes { margin: 8px 0; padding: 14px; border-radius: 12px; background: var(--hover); white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.7 var(--font); }
 * { scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
 
 /* ------------------------------------------------------------------ shell */

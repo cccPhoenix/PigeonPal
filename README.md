@@ -32,18 +32,22 @@
 
 ## 下载与安装
 
-在 [Releases](https://github.com/cccPhoenix/PigeonPal/releases) 下载 **v0.3.1** 对应系统的文件，无需另装 Python、Node.js 或开发环境。
+在 [Releases](https://github.com/cccPhoenix/PigeonPal/releases) 下载已正式发布的最新版本对应系统的文件，无需另装 Python、Node.js 或开发环境。0.4.0 起可在「我的设置 → 软件更新」开启／关闭自动检查，或手动检查；Windows 支持下载后重启安装，Mac 当前需下载 DMG 后手动替换。完整发布流程见[软件更新说明](docs/updates.md)。
 
 | 你的电脑 | 安装文件 | 当前状态 |
 | --- | --- | --- |
-| Windows 10 / 11，Intel 或 AMD 64 位 | `PigeonPal-Setup-0.3.1-x64.exe` | 已在 Windows x64 构建并通过解包应用离线验收；安装流程待一次性 VM 验证 |
-| macOS，Apple 芯片（M1 / M2 / M3 / M4 等） | `PigeonPal-0.3.1-mac-arm64.dmg` | 已构建并通过本机离线验收 |
+| Windows 10 / 11，Intel 或 AMD 64 位 | `PigeonPal-Setup-<版本>-x64.exe` | 下载对应 Release 的附件，检查随附验收报告与校验文件 |
+| macOS，Apple 芯片 | `PigeonPal-<版本>-mac-arm64.dmg` | 下载对应 Release 的附件，检查随附验收报告与校验文件 |
 
 - **Windows：**打开 `.exe`，按向导安装，从桌面或开始菜单启动「鸽友 PigeonPal」。
 - **Mac：**打开 `.dmg`，将「鸽友 PigeonPal」拖入「应用程序」，再从应用程序打开。Intel Mac 暂不提供安装包。
 - 当前是试用版本：Windows 尚无发布者代码签名，Mac 使用临时签名、尚未通过 Apple 公证，系统可能提示无法验证开发者。如果系统阻止打开，请保留提示并联系开发者确认，不需要关闭系统安全功能。
 - 不需要删除旧数据来升级；先从托盘 / 菜单栏退出旧版，再安装新版。安装包与各平台实际检查结果见 [桌面版说明](docs/desktop.md)。
-- Windows 的首次启动报告、`SHA256SUMS-windows.txt` 和[实际验收记录](docs/windows-0.3.1-acceptance.md)随 Release 提供。系统通知显示、通知点击和托盘鼠标操作仍待真实桌面确认。
+- Windows 的首次启动报告与 `SHA256SUMS-windows.txt` 随 Release 提供；早期版本另有 [v0.3.1 实际验收记录](docs/windows-0.3.1-acceptance.md)。系统通知显示、通知点击和托盘鼠标操作仍需真实桌面确认。
+
+[v0.4.0](https://github.com/cccPhoenix/PigeonPal/releases/tag/v0.4.0) 引入应用内更新，并通过 [Windows 与 Mac 双平台构建和发布验收](https://github.com/cccPhoenix/PigeonPal/actions/runs/40995164850)。0.4.1 新增丹阳青溪、蓝田来源与学园选择联动；最新正式版本及对应平台的构建、启动验收报告和校验文件见 [Releases](https://github.com/cccPhoenix/PigeonPal/releases/latest)。CI 验证首次安装，旧版覆盖升级的系统交互仍需在一次性 VM 中确认。
+
+0.3.x 用户需要先手动安装一次 0.4.0 或之后的版本，之后可使用应用内检查更新。
 
 ## 第一次打开，按这几步设置
 
@@ -114,8 +118,9 @@ python -m unittest discover -s tests -p 'test_*.py'
 也可直接运行 `python scripts/serve.py`。开发入口与正式安装包使用不同的认证 / 界面存储，避免同时向同一数据目录启动多个服务。
 
 - [桌面构建、验收与平台限制](docs/desktop.md)
+- [软件更新、版本发布与更新链路](docs/updates.md)
 - [认证说明](docs/authentication.md) · [AI 与提醒](docs/ai.md) · [用户画像](docs/user-profile.md)
 - [通知采集](docs/crawling.md) · [作业采集](docs/homework.md) · [接口约定](docs/interfaces.md)
 - [设计](docs/design.md) · [头像](docs/avatar.md)
 
-提交请新建分支并提 PR，通过检查后合并。**不要提交 API Key、校园凭据、通知数据或个人目录。** 
+提交请新建分支并提 PR，通过检查后合并。详细改动与验证证据写在 PR 中，README 保留当前正式版的简要状态；普通 push 不新增验收记录文档，正式发布时才编写供应用展示的版本更新说明。**不要提交 API Key、校园凭据、通知数据或个人目录。**

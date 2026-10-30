@@ -6,6 +6,7 @@ const {NotificationMonitor}=require('./notifications.cjs')
 const {stateFile}=require('./state.cjs')
 const {ORIGIN,localURL,externalURL,proxyURL,clipboardAllowed}=require('./navigation.cjs')
 const {selfCheckSetup,runSelfCheck}=require('./self-check.cjs')
+const {UpdateManager}=require('./updates.cjs')
 const selfCheck=selfCheckSetup(process.argv)
 const startedAt=performance.now()
 const APP_ID='cn.pigeonpal.desktop'
@@ -18,7 +19,7 @@ app.setAppUserModelId(APP_ID)
 protocol.registerSchemesAsPrivileged([{scheme:'pigeonpal',privileges:{standard:true,secure:true,supportFetchAPI:true,corsEnabled:true}}])
 if(!app.requestSingleInstanceLock()) app.quit()
 else {
-  let win,tray,backend,monitor,timer,quitting=false,closed=false,ready=false,pendingChannel=null
+  let win,tray,backend,monitor,updates,timer,quitting=false,closed=false,ready=false,pendingChannel=null
   const root=join(__dirname,'..')
   const show=(channelId)=>{
     if(!win || win.isDestroyed()) return
@@ -35,7 +36,7 @@ else {
   app.on('before-quit',event=>{
     if(closed) return
     event.preventDefault(); if(quitting) return
-    quitting=true;clearInterval(timer)
+    quitting=true;clearInterval(timer);updates?.stop()
     Promise.resolve(backend?.close()).finally(()=>{closed=true;app.quit()})
   })
   app.whenReady().then(async()=>{
@@ -103,8 +104,38 @@ else {
     }})
     ipcMain.handle('desktop:preferences',(event,value)=>{if(!trusted(event)) throw new Error('invalid_sender');return monitor.preferences(value)})
     ipcMain.handle('desktop:notification-status',event=>{if(!trusted(event)) throw new Error('invalid_sender');return {supported:Notification.isSupported(),enabled:monitor.state.preferences.enabled}})
+    const offline=Boolean(selfCheck)||process.argv.includes('--offline')
+    const updater=app.isPackaged&&!offline&&process.platform==='win32'?require('electron-updater').autoUpdater:null
+    const updateStorage=stateFile(join(userData,'desktop-updates.json'))
+    updates=new UpdateManager({...updateStorage,updater,version:app.getVersion(),packaged:app.isPackaged,offline,
+      onChange:value=>{if(!win.isDestroyed())win.webContents.send('desktop:update-status',value)},
+      prepareInstall:async()=>{
+        // Flush the renderer's debounced cache and stop the private Python process
+        // before NSIS replaces its executable. The ordinary close-to-tray path is bypassed.
+        const saved=await win.webContents.executeJavaScript("window.dispatchEvent(new Event('pigeonpal:save-state',{cancelable:true}))")
+        if(!saved)throw new Error('update_state_not_saved')
+        desktopSession.flushStorageData()
+        quitting=true;clearInterval(timer)
+        await backend.close()
+        closed=true
+      },
+      installFailed:()=>{
+        dialog.showErrorBox('更新未能启动',closed?'请重新打开鸽友，再到「设置 → 软件更新」重试，或从官方 Release 下载新版安装包。':'当前记录尚未保存或安装准备未完成，更新没有开始。请稍后重试。')
+        if(closed)app.quit()
+        else updates.start()
+      },
+    })
+    for(const [channel,action] of Object.entries({
+      'desktop:updates-status':()=>updates.snapshot(),
+      'desktop:updates-check':()=>updates.check(),
+      'desktop:updates-preferences':value=>updates.preferences(value),
+      'desktop:updates-download':()=>updates.download(),
+      'desktop:updates-install':()=>updates.install(),
+      'desktop:updates-release':()=>shell.openExternal(updates.snapshot().releaseUrl),
+    })) ipcMain.handle(channel,(event,value)=>{if(!trusted(event))throw new Error('invalid_sender');return action(value)})
     ipcMain.on('desktop:renderer-ready',event=>{if(trusted(event)){ready=true;if(pendingChannel){win.webContents.send('desktop:open-channel',pendingChannel);pendingChannel=null}}})
     await win.loadURL(ORIGIN+'/index.html')
+    updates.start()
     const poll=()=>monitor.poll().catch(()=>{})
     await poll();timer=setInterval(poll,5000)
     if(selfCheck && !process.argv.includes('--self-check-hold')) {

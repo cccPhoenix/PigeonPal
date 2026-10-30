@@ -22,6 +22,14 @@ async function runSelfCheck({win,api,monitor,show,startedAt,isReady}) {
   assert.equal((await api('/api/auth/status')).bound,false)
   assert.equal((await api('/api/reminders')).reminders.length,0)
   assert.equal((await api('/api/ai/settings')).configured,false)
+  await js("document.querySelector('[data-view=me]').click();document.querySelector('[data-go=updates]').click()")
+  await until(()=>js("Boolean(document.querySelector('[data-update=automatic]'))"))
+  assert.equal(await js("document.querySelector('[data-update=check]').disabled"),true)
+  const updateStatus=await js("window.pigeonpalDesktop.updateStatus()")
+  assert.equal(await js("document.querySelector('.update-version strong').textContent"),'v'+updateStatus.currentVersion)
+  await js("document.querySelector('[data-update=automatic]').click()")
+  await until(()=>js("document.querySelector('[data-update=automatic]').getAttribute('aria-checked')==='false'"))
+  await js("document.querySelector('[data-set=close]').click()")
   const initial=await api('/api/user-profile')
   assert.equal(initial.version,0)
   // System notification presentation is intentionally excluded from unattended checks.
@@ -64,6 +72,7 @@ async function runSelfCheck({win,api,monitor,show,startedAt,isReady}) {
   })
   await until(()=>isReady())
   await until(()=>js("Boolean(document.querySelector('[data-view=user-profile]'))"))
+  assert.equal(await js("window.pigeonpalDesktop.updateStatus().then(value=>value.automaticCheck)"),false)
   await js("document.querySelector('[data-view=user-profile]').click()")
   await until(()=>js("document.querySelector('#up-degree')?.value === 'undergraduate'"))
   await until(()=>js("document.querySelector('[data-academy]')?.value === 'danyang'"))
@@ -86,7 +95,7 @@ async function runSelfCheck({win,api,monitor,show,startedAt,isReady}) {
   assert.equal(await js("typeof window.require"),'undefined')
   return {startupMs,viewSwitchMs:frames.map(Math.round),
     checks:['empty-profile-and-account','renderer-bootstrap','profile-form-save','academy-dropdown-save','academy-source-filter','reminder-form-save',
-      'offline-reminder-while-window-hidden','reopen','calendar-form-save','reload-persistence','view-navigation','context-isolation'],
+      'offline-reminder-while-window-hidden','reopen','calendar-form-save','reload-persistence','view-navigation','context-isolation','update-settings'],
     nativeNotificationSupported:await js('window.pigeonpalDesktop.notificationStatus().then(value=>value.supported)')}
 }
 module.exports={selfCheckSetup,runSelfCheck}

@@ -6,6 +6,8 @@ import { icon } from './icons.js'
 import { escapeHtml, whenLabel } from './format.js'
 import { sheet, closeOverlay, toast } from './overlays.js'
 import { apiErrorText } from '../services/api.js'
+import { desktopUpdates } from '../services/desktop-updates.js'
+import { updatesPageHTML } from './updates.js'
 
 const PAGES = [
   ['bot', '形象与称呼', 'sparkle'],
@@ -15,6 +17,7 @@ const PAGES = [
   ['auth', '身份认证', 'key'],
   ['api', 'API 设置', 'settings'],
   ['look', '外观', 'image'],
+  ['updates', '软件更新', 'restore'],
   ['about', '关于', 'settings'],
 ]
 
@@ -24,9 +27,10 @@ export function openSettings(api, { page = 'bot', opener } = {}) {
   if (page === 'api') return api.openApiSettings?.(opener)
   if (page === 'user-profile') return api.openUserProfile?.(opener)
   const { store } = api
+  let offUpdates = null
   const box = sheet(`<nav class="sheet-nav"><h2>设置</h2>${PAGES.map(([id, label, ic]) => `<button class="nav-item" data-page="${id}">${icon(ic, 16)}${label}</button>`).join('')}</nav>
 <div class="sheet-body"></div>
-<button class="icon-btn flat sheet-close" data-set="close" aria-label="关闭">${icon('close')}</button>`, { opener })
+<button class="icon-btn flat sheet-close" data-set="close" aria-label="关闭">${icon('close')}</button>`, { opener, onClose: () => offUpdates?.() })
   const body = box.querySelector('.sheet-body')
   let currentPage = page
 
@@ -69,8 +73,10 @@ ${store.state.channels.filter(c => c.kind === 'source').map(c => `<div class="to
 <div class="field"><span class="label">主题</span>${seg('theme', [['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']])}</div>
 <div class="field"><span class="label">动效</span>${seg('motion', [['lively', '灵动'], ['calm', '克制'], ['off', '关闭']])}<span class="help">克制：只保留眨眼；关闭：完全静止。系统开启「减少动态效果」时也会静止。</span></div>`,
 
+    updates: () => updatesPageHTML(desktopUpdates.state),
+
     about: () => `<h3>关于</h3>
-<p class="note">PigeonPal 校园伙伴。支持 DeepSeek 对话、云峰与 ITC 通知整理和本机提醒。保持本机服务运行即可持续采集与调度；API 和校园绑定在各自设置中管理。</p>
+<p class="note">PigeonPal 校园伙伴${desktopUpdates.state.currentVersion ? ` · v${escapeHtml(desktopUpdates.state.currentVersion)}` : ''}。支持 DeepSeek 对话、云峰与 ITC 通知整理和本机提醒。保持本机服务运行即可持续采集与调度；API 和校园绑定在各自设置中管理。</p>
 <div class="btns"><a class="btn" href="./lab.html" target="_blank" style="display:inline-grid;place-items:center;text-decoration:none">打开形象实验室</a><button class="btn danger" data-set="reset">重置界面记录</button></div>`,
   }
 
@@ -87,6 +93,16 @@ ${store.state.channels.filter(c => c.kind === 'source').map(c => `<div class="to
     const t = e.target.closest('button')
     if (!t) return
     if (t.dataset.page) return show(t.dataset.page)
+    if (t.dataset.update) {
+      try {
+        if (t.dataset.update === 'automatic') await desktopUpdates.automatic(t.getAttribute('aria-checked') !== 'true')
+        if (t.dataset.update === 'check') await desktopUpdates.check()
+        if (t.dataset.update === 'download') await desktopUpdates.download()
+        if (t.dataset.update === 'install') await desktopUpdates.install()
+        if (t.dataset.update === 'release') await desktopUpdates.openRelease()
+      } catch { toast('更新操作未完成，请稍后重试') }
+      return
+    }
     if (t.dataset.set === 'close') return closeOverlay()
     if (t.dataset.set === 'reset') { if (confirm('重置本页聊天记录和外观设置？本机通知、提醒、校园绑定和 API 配置会保留。')) { closeOverlay(); api.reset() } return }
     if (t.dataset.set === 'demo-reminder') { try { await api.demoReminder(); toast('5 秒后见'); closeOverlay() } catch (error) { toast(apiErrorText(error)) } return }
@@ -136,7 +152,9 @@ ${store.state.channels.filter(c => c.kind === 'source').map(c => `<div class="to
       reader.readAsDataURL(file)
     }
   })
+  offUpdates = desktopUpdates.subscribe(() => { if (currentPage === 'updates') show('updates') })
   show(page)
+  desktopUpdates.connect().catch(() => {})
 }
 
 function toLocalInput(at) {
