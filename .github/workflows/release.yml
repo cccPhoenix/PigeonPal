@@ -49,6 +49,11 @@ jobs:
             node build/release.cjs verify
           fi
       - run: python -m pip install -r requirements-build.txt
+      - name: Select the configured Python for desktop launcher tests
+        shell: bash
+        run: python -c "import sys; print('PIGEONPAL_PYTHON=' + sys.executable)" >> "$GITHUB_ENV"
+      - name: Verify source backend cold start
+        run: python build/smoke_source.py
       - run: npm test
       - run: python -m unittest discover -s tests -p "test_*.py"
       - name: Verify real Windows update downloads and checksum rejection
