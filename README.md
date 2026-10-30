@@ -43,6 +43,10 @@
 - 不需要删除旧数据来升级；先从托盘 / 菜单栏退出旧版，再安装新版。安装包与各平台实际检查结果见 [桌面版说明](docs/desktop.md)。
 - Windows 的首次启动报告与 `SHA256SUMS-windows.txt` 随 Release 提供；早期版本另有 [v0.3.1 实际验收记录](docs/windows-0.3.1-acceptance.md)。系统通知显示、通知点击和托盘鼠标操作仍需真实桌面确认。
 
+当前正式版 [v0.4.0](https://github.com/cccPhoenix/PigeonPal/releases/tag/v0.4.0) 已通过 [Windows 与 Mac 双平台构建和发布验收](https://github.com/cccPhoenix/PigeonPal/actions/runs/40995164850)：JavaScript 138 项通过，Python 276 项通过、1 项跳过，两平台各 11 项桌面启动检查通过。发布后已用实际更新组件从公开 Release 下载 Windows 安装包，并复核 SHA512 与 SHA256。CI 执行了 Windows 真实首次安装；旧版覆盖升级的系统交互仍需在一次性 VM 中确认。
+
+0.3.x 用户需要先手动安装一次 0.4.0，之后可使用应用内检查更新。
+
 ## 第一次打开，按这几步设置
 
 1. **先看看通知。** 左侧铃铛进入通知，选择来源；公开通知会逐步同步。点击一条看详情，点击原文链接回学校网页。列表和详情均可星标置顶、移入回收站；回收站支持恢复。可按系统推荐程度、发布时间从新到旧／从旧到新、通知类型排序，星标始终优先；排序选择会在重启后保留。
@@ -117,4 +121,4 @@ python -m unittest discover -s tests -p 'test_*.py'
 - [通知采集](docs/crawling.md) · [作业采集](docs/homework.md) · [接口约定](docs/interfaces.md)
 - [设计](docs/design.md) · [头像](docs/avatar.md)
 
-提交请新建分支并提 PR，通过检查后合并。**不要提交 API Key、校园凭据、通知数据或个人目录。** 
+提交请新建分支并提 PR，通过检查后合并。详细改动与验证证据写在 PR 中，README 保留当前正式版的简要状态；普通 push 不新增验收记录文档，正式发布时才编写供应用展示的版本更新说明。**不要提交 API Key、校园凭据、通知数据或个人目录。**
