@@ -119,7 +119,19 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" != "$tag" ]]; then
             echo 'Tag/version mismatch'; exit 1
           fi
-          gh release create "$tag" --draft --target "$GITHUB_SHA" \
-            --title "鸽友 v${version}" \
-            --notes-file "docs/releases/${version}.md" release-assets/*
+          mapfile -d '' assets < <(find release-assets -type f -print0)
+          [[ ${#assets[@]} -eq 8 ]]
+          if existing="$(gh release view "$tag" --json isDraft,targetCommitish 2>/dev/null)"; then
+            node -e 'const r=JSON.parse(process.argv[1]); if(!r.isDraft || r.targetCommitish!==process.argv[2]) throw Error("Only the matching unpublished draft can be resumed")' "$existing" "$GITHUB_SHA"
+          else
+            gh release create "$tag" --draft --target "$GITHUB_SHA" \
+              --title "鸽友 v${version}" --notes-file "docs/releases/${version}.md"
+          fi
+          gh release upload "$tag" "${assets[@]}" --clobber
+          gh release view "$tag" --json assets | node -e '
+            const fs=require("fs"),path=require("path"); const remote=JSON.parse(fs.readFileSync(0,"utf8")).assets;
+            const files=process.argv.slice(1); if(remote.length!==files.length) throw Error("Unexpected release assets");
+            for(const file of files) { const asset=remote.find(a=>a.name===path.basename(file));
+              if(!asset || asset.size!==fs.statSync(file).size) throw Error("Release upload incomplete"); }
+          ' "${assets[@]}"
           gh release edit "$tag" --draft=false --latest

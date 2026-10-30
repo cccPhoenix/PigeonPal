@@ -23,7 +23,7 @@
 3. 将代码提交到 main 后，创建同版本标签，例如 `git tag v0.4.1`，推送标签 `git push origin v0.4.1`。
 4. `.github/workflows/release.yml` 在 Windows x64 和 Apple Silicon Mac 上分别构建、验收。Windows 在一次性 runner 中执行安装验收；Mac 检查 DMG、签名结构和实际应用首次启动。
 5. `build/release.cjs stage windows|mac` 校验版本、桌面验收报告和 Windows 更新清单的文件名、大小、SHA512，只复制当前版本的明确文件清单，并生成 SHA256 校验文件。
-6. 两个平台均通过后，发布任务创建含全部附件的 Release 草稿，上传完成后转为正式最新版。构建失败不会更新正式发布源。已有同名 Release 不会被脚本覆盖；需要先人工判断失败原因。
+6. 两个平台均通过后，发布任务创建 Release 草稿，逐个上传全部附件并核对数量、名称和大小，再转为正式最新版。构建失败不会更新正式发布源；上传中断可重试同一提交的未发布草稿。已正式发布或指向其他提交的同名版本不会被覆盖，需要先人工判断。
 
 workflow_dispatch 默认只执行完整构建与验收并保存附件；显式勾选 publish_release 后，双平台通过时也会创建同版本标签并发布，适合首次发布。修改工作流需要相应 GitHub 凭据权限；发布任务使用仓库提供的 GITHUB_TOKEN，仅该任务取得 contents:write，不将 Token 打入安装包。
 
