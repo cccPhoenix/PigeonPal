@@ -20,15 +20,17 @@ const FETCH_STATE = { complete: '正文已采集', pending: '正文排队中', s
 
 const cacheKey = n => `${n.noticeId}:${n.revision ?? ''}`
 const SOURCE_ICONS = { yunfeng: 'school', danyang: 'school', lantian: 'school', itc: 'computer', qsxy: 'graduate', bksy: 'book' }
+const COMPACT_SORTS = { newest: '从新到旧', oldest: '从旧到新', type: '通知类型' }
 const sourceIcon = sourceId => icon(SOURCE_ICONS[sourceId] ?? 'bell', 17)
 // Detail-endpoint URLs are not run through store.cleanItem, so pin the scheme here.
 const safeHref = url => (/^https?:\/\//.test(url ?? '') ? escapeHtml(url) : '')
 
-export function createRail({ listRoot, detailRoot, store, client, onRemind, onAttach, onRead }) {
+export function createRail({ listRoot, detailRoot, store, client, onRemind, onAttach, onRead, onProcess }) {
   let view = 'notice'
   let filter = null
   let academy = ''
   let recommendationMode = 'recommended'
+  let noticeSortOpen = false
   let trash = false
   let selected = null
   let selectedHomework = null
@@ -223,11 +225,11 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
     }
     if (selected && !all.some(n => n.noticeId === selected)) { selected = null; renderDetail(); syncPaneAttr() }
     const trashCount = Object.keys(store.state.noticeMeta).filter(id => noticeDeleted(store.state, id) && store.notice(id) && academySourceVisible(store.notice(id).sourceId, academy)).length
-    const options = Object.entries(NOTICE_SORTS).map(([key, label]) => `<option value="${key}"${store.state.noticeSort === key ? ' selected' : ''}>${label}</option>`).join('')
+    const options = Object.entries(NOTICE_SORTS).map(([key, label]) => `<button class="notice-sort-option" type="button" role="option" data-rail="sort-option" data-sort="${key}" aria-selected="${store.state.noticeSort === key}">${label}${store.state.noticeSort === key ? icon('check', 15) : ''}</button>`).join('')
     repaint(listRoot, `<div class="rail-top">
   <span class="rail-head">${trash ? '通知回收站' : '通知'}</span><button class="pill" data-rail="trash" aria-pressed="${trash}">${icon(trash ? 'chevron' : 'trash', 15)}${trash ? '返回通知' : `回收站${trashCount ? ` · ${trashCount}` : ''}`}</button>
 </div>
-<div class="notice-controls">${trash ? '<span class="muted">删除的通知可在此恢复</span>' : `<div class="seg" aria-label="通知推荐范围"><button data-rail="recommendation-mode" data-mode="recommended" aria-pressed="${recommendationMode === 'recommended'}">推荐</button><button data-rail="recommendation-mode" data-mode="all" aria-pressed="${recommendationMode === 'all'}">全部通知</button></div>`}<label class="notice-sort">排序<select data-rail="sort" aria-label="通知排序">${options}</select></label></div>
+<div class="notice-controls">${trash ? '<span class="muted">删除的通知可在此恢复</span>' : `<div class="seg" aria-label="通知推荐范围"><button data-rail="recommendation-mode" data-mode="recommended" aria-pressed="${recommendationMode === 'recommended'}">推荐</button><button data-rail="recommendation-mode" data-mode="all" aria-pressed="${recommendationMode === 'all'}">全部通知</button></div>`}<div class="notice-sort"><span class="notice-sort-label">排序</span><div class="notice-sort-wrap" data-rail="sort-selector"><button class="notice-sort-button" type="button" data-rail="sort-toggle" aria-label="通知排序，当前${NOTICE_SORTS[store.state.noticeSort]}" aria-haspopup="listbox" aria-controls="notice-sort-menu" aria-expanded="${noticeSortOpen}"><span class="notice-sort-full">${NOTICE_SORTS[store.state.noticeSort]}</span><span class="notice-sort-compact" aria-hidden="true">${COMPACT_SORTS[store.state.noticeSort]}</span>${icon('chevron', 14)}</button><div class="notice-sort-menu" id="notice-sort-menu" role="listbox" aria-label="通知排序"${noticeSortOpen ? '' : ' hidden'}>${options}</div></div></div></div>
 <div class="rail-chips-wrap" data-more="false" data-scrollable="false"><div class="chips rail-chips">${chipsHTML()}</div><div class="rail-chips-scrollbar" aria-hidden="true"><div class="rail-chips-thumb"></div></div></div>
 <div class="rail-list pane-scroll">${rows.join('') || `<div class="empty">${trash ? filter ? '这个来源的回收站为空' : '回收站为空' : recommendationMode === 'recommended' ? '暂时没有推荐，可以切换到「全部通知」查看原始通知。' : filter ? '这个来源还没有通知' : '还没有通知，爬虫每五分钟看一次'}</div>`}</div>`)
   }
@@ -318,6 +320,7 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
   function setView(next) {
     if (next === view) return
     homeworkMenuOpen = false
+    noticeSortOpen = false
     view = next
     render()
   }
@@ -418,6 +421,7 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
 
   function setTrash(value) {
     trash = Boolean(value)
+    noticeSortOpen = false
     filter = null
     selected = null
     render()
@@ -434,6 +438,22 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
 
   function bind(root) {
     root.addEventListener('click', e => {
+      const sortToggle = e.target.closest?.('[data-rail="sort-toggle"]')
+      if (sortToggle && view === 'notice') {
+        noticeSortOpen = !noticeSortOpen
+        renderList()
+        if (noticeSortOpen) listRoot.querySelector?.('[data-rail="sort-option"][aria-selected="true"]')?.focus()
+        else listRoot.querySelector?.('[data-rail="sort-toggle"]')?.focus()
+        return
+      }
+      const sortOption = e.target.closest?.('[data-rail="sort-option"]')
+      if (sortOption && view === 'notice') {
+        noticeSortOpen = false
+        if (store.state.noticeSort === sortOption.dataset.sort) renderList()
+        else store.setNoticeSort(sortOption.dataset.sort)
+        listRoot.querySelector?.('[data-rail="sort-toggle"]')?.focus()
+        return
+      }
       const action = e.target.closest?.('[data-notice-action]')
       if (view === 'notice' && action) return noticeAction(action.dataset.noticeAction, action.dataset.id)
       if (view === 'homework') {
@@ -487,7 +507,7 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
         return
       }
       if (act.dataset.act === 'reprocess' && n) {
-        client.process(n.noticeId).then(() => toast('已加入整理队列')).catch(error => toast(apiErrorText(error)))
+        client.process(n.noticeId).then(() => { toast('已加入整理队列'); onProcess?.() }).catch(error => toast(apiErrorText(error)))
       }
     })
   }
@@ -495,13 +515,30 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
   bind(listRoot)
   bind(detailRoot)
   store.on('notice-meta', () => { if (view === 'notice') render() })
-  listRoot.addEventListener('change', e => {
-    if (view !== 'notice' || !e.target.closest?.('[data-rail="sort"]')) return
-    store.setNoticeSort(e.target.value)
-    listRoot.querySelector?.('[data-rail="sort"]')?.focus()
-  })
-
   listRoot.addEventListener('keydown', e => {
+    if (view === 'notice') {
+      const toggle = e.target.closest?.('[data-rail="sort-toggle"]')
+      const option = e.target.closest?.('[data-rail="sort-option"]')
+      if (e.key === 'Escape' && noticeSortOpen) {
+        e.preventDefault()
+        noticeSortOpen = false
+        renderList()
+        listRoot.querySelector?.('[data-rail="sort-toggle"]')?.focus()
+      } else if (toggle && ['ArrowDown', 'ArrowUp'].includes(e.key)) {
+        e.preventDefault()
+        noticeSortOpen = true
+        renderList()
+        listRoot.querySelector?.('[data-rail="sort-option"][aria-selected="true"]')?.focus()
+      } else if (option && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+        e.preventDefault()
+        const options = [...(listRoot.querySelectorAll?.('[data-rail="sort-option"]') || [])]
+        const index = options.indexOf(option)
+        const next = e.key === 'Home' ? 0 : e.key === 'End' ? options.length - 1
+          : (index + (e.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length
+        options[next]?.focus()
+      }
+      return
+    }
     if (view !== 'homework') return
     const toggle = e.target.closest?.('[data-rail="homework-toggle"]')
     const option = e.target.closest?.('[data-rail="homework-course"]')
@@ -526,6 +563,10 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
   })
 
   document.addEventListener('click', e => {
+    if (view === 'notice' && noticeSortOpen && !e.target.closest?.('[data-rail="sort-selector"]')) {
+      noticeSortOpen = false
+      renderList()
+    }
     if (view === 'homework' && homeworkMenuOpen && !e.target.closest?.('[data-rail="homework-selector"]')) {
       homeworkMenuOpen = false
       renderHomeworkList()

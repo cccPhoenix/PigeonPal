@@ -46,6 +46,13 @@ class NoticeDecisionTests(unittest.TestCase):
         self.addCleanup(processor.close)
         return processor
 
+    def test_status_names_the_notice_currently_being_processed(self):
+        notice = self.notice()
+        processor = self.processor()
+        self.assertIsNone(processor.status()["activeNotice"])
+        processor.active = notice["id"]
+        self.assertEqual(processor.status()["activeNotice"], {"noticeId": notice["id"], "title": notice["title"]})
+
     def test_six_examples_traverse_model_protocol_cache_and_restart(self):
         calls = []
         responses = {}

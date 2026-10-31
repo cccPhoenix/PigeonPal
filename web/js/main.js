@@ -1,6 +1,7 @@
 import { connectDesktop } from './services/desktop.js'
 import { desktopUpdates } from './services/desktop-updates.js'
 import { createUpdateBanner } from './ui/updates.js'
+import { createNoticeProgress } from './ui/notice-progress.js'
 import { createStore } from './store.js'
 import { newId, pendingReminders } from './reminders.js'
 import { markHTML, setMarkState, startGaze } from './mark/index.js'
@@ -60,6 +61,7 @@ async function refreshSourceStates() {
   if (sourceRefresh) return sourceRefresh
   sourceRefresh = Promise.all([identityClient.sources(), apiClient.status()]).then(([sources, ai]) => {
     aiStatus = ai
+    noticeProgress.update(ai)
     sourceStatusError = false
     for (const source of sources) if (source && localSourceIds.has(source.id)) sourceStates.set(source.id, source)
   }).catch(() => { sourceStatusError = true }).finally(() => { sourceRefresh = null })
@@ -121,6 +123,7 @@ function applyPrefs() {
 }
 
 const noticeView = $('notice')
+const noticeProgress = createNoticeProgress({ root: $('notice-progress'), client: apiClient })
 let profilePage = null
 
 function setView(view, { acknowledge = true } = {}) {
@@ -160,6 +163,7 @@ const rail = createRail({
   onRemind: (item, anchor) => openNoticeReminder(item, anchor),
   onAttach: n => composer.attachNotice(n.noticeId),
   onRead: markNoticeRead,
+  onProcess: () => noticeProgress.refresh(),
 })
 const calendar = createCalendar({ root: $('pane-calendar'), store, onAdd: openNewCalendarItem, onOpen: openCalendarItem })
 
@@ -370,7 +374,7 @@ ${detail?.attachments?.length ? `<div class="note">附件：${detail.attachments
     retry.textContent = '重新整理'
     box.querySelector('.btns').prepend(retry)
     retry.addEventListener('click', async () => {
-      try { await apiClient.process(item.noticeId); toast('已加入整理队列') }
+      try { await apiClient.process(item.noticeId); toast('已加入整理队列'); noticeProgress.refresh() }
       catch (error) { toast(apiErrorText(error)) }
     })
   }
@@ -673,6 +677,8 @@ select('bot')
 syncBadges()
 startGaze(document)
 refreshSourceStates()
+setInterval(() => { if (document.visibilityState === 'visible') noticeProgress.refresh() }, 5000)
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') noticeProgress.refresh() })
 academySelection.refresh()
 
 let homeworkSnapshotReady = false

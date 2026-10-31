@@ -201,12 +201,17 @@ class NoticeProcessor:
 
     def status(self):
         counts = {"ready": 0, "pending": 0, "processing": 0, "failed": 0, "blocked": 0, "waiting_body": 0, "unconfigured": 0, "local_only": 0}
+        active_notice = None
+        active_id = self.active
         for notice in self.notices.export_items():
             state = self.analysis(notice)["state"]
             counts[state] += 1
+            if notice["id"] == active_id:
+                active_notice = {"noticeId": notice["id"], "title": notice["title"]}
         return {"configured": self.config.configured, "provider": self.config.provider,
                 "model": self.config.model or None, "automatic": self.config.automatic,
                 "allowProtected": self.config.allow_protected, "counts": counts,
+                "activeNotice": active_notice,
                 "error": self.storage_error or self.config.error or self.last_error,
                 "retryAt": iso(self.retry_at) if self.retry_at > self.clock() else None}
 
