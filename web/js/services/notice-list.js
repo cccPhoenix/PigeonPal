@@ -3,8 +3,7 @@ import { noticeKept } from './recommendations.js'
 import { academySourceVisible } from './academy-selection.js'
 
 export const NOTICE_SORTS = {
-  recommended: '系统推荐程度', newest: '发布时间：从新到旧',
-  oldest: '发布时间：从旧到新', type: '通知类型',
+  newest: '发布时间：从新到旧', oldest: '发布时间：从旧到新', type: '通知类型',
 }
 
 export const noticeChannels = (state, academy = '') => state.channels.filter(c => c.kind === 'source' && c.sourceId && c.sourceId !== 'xzzd' && academySourceVisible(c.sourceId, academy))

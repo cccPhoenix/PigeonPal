@@ -1,5 +1,5 @@
 import { icon } from './icons.js'
-import { escapeHtml, shortTime, dayLabel, whenLabel } from './format.js'
+import { escapeHtml, shortTime, whenLabel } from './format.js'
 import { NOTICE_CATEGORIES, NOTICE_DRAG_TYPE, isAttachable } from '../services/sources.js'
 import { apiErrorText } from '../services/api.js'
 import { toast } from './overlays.js'
@@ -36,17 +36,73 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
   let homeworkMenuOpen = false
   const detailCache = new Map()
   const homeworkCache = new Map()
+  const chipsObserver = globalThis.ResizeObserver ? new ResizeObserver(() => syncChipOverflow()) : null
 
   const channelOf = n => store.state.channels.find(c => c.sourceId === n.sourceId)
   const row = (label, value) => (value ? `<tr><th scope="row">${escapeHtml(label)}</th><td>${value}</td></tr>` : '')
+
+  function syncChipOverflow() {
+    const chips = listRoot.querySelector?.('.rail-chips')
+    const wrap = chips?.parentElement
+    if (!wrap?.dataset) return
+    const maxScroll = chips.scrollWidth - chips.clientWidth
+    wrap.dataset.more = String(chips.scrollLeft < maxScroll - 1)
+    wrap.dataset.scrollable = String(maxScroll > 1)
+    const track = wrap.querySelector?.('.rail-chips-scrollbar')
+    const thumb = track?.firstElementChild
+    if (!thumb || maxScroll <= 1) return
+    const thumbWidth = Math.max(28, track.clientWidth * chips.clientWidth / chips.scrollWidth)
+    thumb.style.width = `${thumbWidth}px`
+    thumb.style.transform = `translateX(${chips.scrollLeft / maxScroll * (track.clientWidth - thumbWidth)}px)`
+  }
+
+  function bindChipScrollbar(chips) {
+    const wrap = chips.parentElement
+    const track = wrap?.querySelector('.rail-chips-scrollbar')
+    const thumb = track?.firstElementChild
+    if (!thumb) return
+    let pointerId = null
+    let grabOffset = 0
+    const move = event => {
+      if (event.pointerId !== pointerId) return
+      const maxScroll = chips.scrollWidth - chips.clientWidth
+      const travel = track.clientWidth - thumb.offsetWidth
+      if (travel > 0) chips.scrollLeft = (event.clientX - track.getBoundingClientRect().left - grabOffset) / travel * maxScroll
+    }
+    track.addEventListener('pointerdown', event => {
+      if (chips.scrollWidth <= chips.clientWidth) return
+      pointerId = event.pointerId
+      grabOffset = event.target === thumb ? event.clientX - thumb.getBoundingClientRect().left : thumb.offsetWidth / 2
+      wrap.dataset.dragging = 'true'
+      track.setPointerCapture(event.pointerId)
+      move(event)
+    })
+    track.addEventListener('pointermove', move)
+    for (const type of ['pointerup', 'pointercancel']) track.addEventListener(type, event => {
+      if (event.pointerId === pointerId) {
+        pointerId = null
+        delete wrap.dataset.dragging
+      }
+    })
+  }
 
   // Re-rendering replaces a subtree, so each pane's scroll offset is carried over.
   function repaint(root, html) {
     const pane = root.querySelector?.('.pane-scroll')
     const y = pane?.scrollTop ?? 0
+    const chipsX = root.querySelector?.('.rail-chips')?.scrollLeft ?? 0
+    if (root === listRoot) chipsObserver?.disconnect()
     root.innerHTML = html
     const next = root.querySelector?.('.pane-scroll')
     if (next && y) next.scrollTop = y
+    const chips = root.querySelector?.('.rail-chips')
+    if (chips && chipsX) chips.scrollLeft = chipsX
+    if (chips) {
+      chips.addEventListener?.('scroll', syncChipOverflow, { passive: true })
+      bindChipScrollbar(chips)
+      chipsObserver?.observe(chips)
+      syncChipOverflow()
+    }
   }
 
   function chipsHTML() {
@@ -158,8 +214,11 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
     for (const n of all) {
       const starred = store.state.noticeMeta[n.noticeId]?.starred
       const group = starred ? '星标置顶' : store.state.noticeSort === 'type' ? NOTICE_CATEGORIES[noticeCategory(n)]
-        : ['newest', 'oldest'].includes(store.state.noticeSort) ? (n.publishedAt > 0 ? dayLabel(n.publishedAt) : '发布日期未知') : '按相关性排序 · 可能有用的继续保留'
-      if (group !== lastGroup) { rows.push(`<div class="divider">${escapeHtml(group)}</div>`); lastGroup = group }
+        : ['newest', 'oldest'].includes(store.state.noticeSort) ? null : '按相关性排序 · 可能有用的继续保留'
+      if (group !== lastGroup) {
+        if (group) rows.push(`<div class="divider">${escapeHtml(group)}</div>`)
+        lastGroup = group
+      }
       rows.push(itemHTML(n))
     }
     if (selected && !all.some(n => n.noticeId === selected)) { selected = null; renderDetail(); syncPaneAttr() }
@@ -169,7 +228,7 @@ export function createRail({ listRoot, detailRoot, store, client, onRemind, onAt
   <span class="rail-head">${trash ? '通知回收站' : '通知'}</span><button class="pill" data-rail="trash" aria-pressed="${trash}">${icon(trash ? 'chevron' : 'trash', 15)}${trash ? '返回通知' : `回收站${trashCount ? ` · ${trashCount}` : ''}`}</button>
 </div>
 <div class="notice-controls">${trash ? '<span class="muted">删除的通知可在此恢复</span>' : `<div class="seg" aria-label="通知推荐范围"><button data-rail="recommendation-mode" data-mode="recommended" aria-pressed="${recommendationMode === 'recommended'}">推荐</button><button data-rail="recommendation-mode" data-mode="all" aria-pressed="${recommendationMode === 'all'}">全部通知</button></div>`}<label class="notice-sort">排序<select data-rail="sort" aria-label="通知排序">${options}</select></label></div>
-<div class="chips rail-chips">${chipsHTML()}</div>
+<div class="rail-chips-wrap" data-more="false" data-scrollable="false"><div class="chips rail-chips">${chipsHTML()}</div><div class="rail-chips-scrollbar" aria-hidden="true"><div class="rail-chips-thumb"></div></div></div>
 <div class="rail-list pane-scroll">${rows.join('') || `<div class="empty">${trash ? filter ? '这个来源的回收站为空' : '回收站为空' : recommendationMode === 'recommended' ? '暂时没有推荐，可以切换到「全部通知」查看原始通知。' : filter ? '这个来源还没有通知' : '还没有通知，爬虫每五分钟看一次'}</div>`}</div>`)
   }
 

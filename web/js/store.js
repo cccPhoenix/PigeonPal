@@ -35,7 +35,7 @@ export function createInitialState() {
     messages: Object.fromEntries(['bot', ...LOCAL_CHANNELS.map(c => c.id)].map(id => [id, []])),
     notices: {},
     noticeMeta: {},
-    noticeSort: 'recommended',
+    noticeSort: 'newest',
     homeworkItems: {},
     calendarItems: {},
     calendarCompleted: {},

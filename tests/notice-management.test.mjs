@@ -45,7 +45,8 @@ test('legacy counters reconcile to distinct notices and malformed metadata canno
     a: { starred: 'true', deletedAt: 'today', unread: true, channelId: 'bot' },
     b: { starred: true, deletedAt: 42, unread: true, channelId: 'src-yunfeng' },
   } })
-  assert.equal(state.noticeSort, 'recommended')
+  assert.equal(state.noticeSort, 'newest')
+  assert.equal(hydrate({ version: 1, noticeSort: 'recommended' }).noticeSort, 'newest')
   assert.equal(state.noticeMeta.a, undefined)
   assert.deepEqual(state.noticeMeta.b, { starred: true, deletedAt: 42 })
   assert.equal(noticeUnreadCount(state), 0)
@@ -91,6 +92,8 @@ test('stars lead every sort; time uses both directions and unknown dates stay la
     item('star', 'yunfeng', { publishedAt: 1, recommendation: { state: 'ready', decision: 'not_applicable', allowPush: false } }),
   ]) store.upsertNotice(`src-${n.sourceId}`, n)
   store.setNoticeStarred('star', true)
+  assert.equal(store.state.noticeSort, 'newest')
+  assert.deepEqual(ids(store), ['star', 'new', 'academic', 'old', 'unknown'])
   assert.deepEqual(ids(store, { sort: 'recommended' }), ['star', 'old', 'new', 'academic', 'unknown'])
   assert.deepEqual(ids(store, { sort: 'newest' }), ['star', 'new', 'academic', 'old', 'unknown'])
   assert.deepEqual(ids(store, { sort: 'oldest' }), ['star', 'old', 'academic', 'new', 'unknown'])

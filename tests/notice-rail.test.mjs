@@ -89,6 +89,15 @@ test('rail filter shows one source and marks the active chip', () => {
   assert.deepEqual(read, ['yunfeng', null])
 })
 
+test('time sorting shows newest notices first without a heading for each date', () => {
+  const store = createStore(null), listRoot = pane()
+  store.upsertNotice('src-yunfeng', item('older', 'yunfeng', 1_700_000_000_000))
+  store.upsertNotice('src-yunfeng', item('newer', 'yunfeng', 1_700_172_800_000))
+  createRail({ listRoot, detailRoot: pane(), store, client: {} }).renderList()
+  assert.ok(listRoot.innerHTML.indexOf('data-notice="newer"') < listRoot.innerHTML.indexOf('data-notice="older"'))
+  assert.doesNotMatch(listRoot.innerHTML, /class="divider"/)
+})
+
 test('rail chips name every source and carry its unread count', () => {
   const store = createStore(null)
   store.upsertNotice('src-qsxy', item('q', 'qsxy', 5))

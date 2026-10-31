@@ -130,7 +130,20 @@ input, textarea, select { font: inherit; color: inherit; }
 .detail-back { display: none; }
 .detail-back .ic { transform: rotate(180deg); }
 .detail-close { flex: none; }
-.rail-chips { margin: 6px 0 10px; padding: 0 4px 10px; border-bottom: .5px solid var(--line); }
+.rail-chips-wrap { position: relative; min-width: 0; }
+.rail-chips-wrap::after { content: ''; position: absolute; top: 0; right: 0; bottom: 11px; width: 32px; pointer-events: none; background: linear-gradient(to right, transparent, var(--sidebar)); opacity: 0; transition: opacity .15s ease; }
+.rail-chips-wrap[data-more="true"]::after { opacity: 1; }
+.chips.rail-chips { flex-wrap: nowrap; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; margin: 6px 0 10px; padding: 0 4px 10px; border-bottom: .5px solid var(--line); }
+.rail-chips::-webkit-scrollbar { display: none; }
+.rail-chips-scrollbar { position: absolute; right: 4px; bottom: 5px; left: 4px; height: 12px; opacity: 0; pointer-events: none; transition: opacity .2s ease; touch-action: none; }
+.rail-chips-wrap[data-scrollable="true"]:hover .rail-chips-scrollbar,
+.rail-chips-wrap[data-scrollable="true"]:focus-within .rail-chips-scrollbar,
+.rail-chips-wrap[data-dragging="true"] .rail-chips-scrollbar { opacity: 1; pointer-events: auto; }
+.rail-chips-thumb { position: absolute; top: 0; left: 0; height: 12px; cursor: grab; }
+.rail-chips-thumb::after { content: ''; position: absolute; top: 5px; right: 0; left: 0; height: 2px; border-radius: 2px; background: var(--line-2); transition: background-color .15s ease; }
+.rail-chips-thumb:hover::after, .rail-chips-thumb:active::after { background: var(--ink-3); }
+.rail-chips-thumb:active { cursor: grabbing; }
+.rail-chips .pill { flex: none; white-space: nowrap; }
 .rail-chips .pill { background: transparent; box-shadow: none; color: var(--ink-2); }
 .rail-chips .pill:hover { background: var(--hover); color: var(--ink); }
 .rail-chips .pill.on { background: var(--notice-soft); color: var(--notice-accent); box-shadow: inset 0 0 0 .5px var(--line-2); }
