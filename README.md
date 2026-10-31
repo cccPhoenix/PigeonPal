@@ -45,7 +45,7 @@
 - 不需要删除旧数据来升级；先从托盘 / 菜单栏退出旧版，再安装新版。安装包与各平台实际检查结果见 [桌面版说明](docs/desktop.md)。
 - Windows 的首次启动报告与 `SHA256SUMS-windows.txt` 随 Release 提供；早期版本另有 [v0.3.1 实际验收记录](docs/windows-0.3.1-acceptance.md)。系统通知显示、通知点击和托盘鼠标操作仍需真实桌面确认。
 
-[v0.4.0](https://github.com/cccPhoenix/PigeonPal/releases/tag/v0.4.0) 引入应用内更新，并通过 [Windows 与 Mac 双平台构建和发布验收](https://github.com/cccPhoenix/PigeonPal/actions/runs/40995164850)。0.4.1 新增丹阳青溪、蓝田来源与学园选择联动；最新正式版本及对应平台的构建、启动验收报告和校验文件见 [Releases](https://github.com/cccPhoenix/PigeonPal/releases/latest)。CI 验证首次安装，旧版覆盖升级的系统交互仍需在一次性 VM 中确认。
+[v0.4.0](https://github.com/cccPhoenix/PigeonPal/releases/tag/v0.4.0) 引入应用内更新，并通过 [Windows 与 Mac 双平台构建和发布验收](https://github.com/cccPhoenix/PigeonPal/actions/runs/40995164850)。0.4.1 新增丹阳青溪、蓝田来源与学园选择联动，并补强通知分类栏／排序与日历等界面的加载条等体验；Mac DMG 已按当前 main（含上述改动）重建，Windows 安装包仍以 Release 已发布附件为准。最新正式版本及对应平台的构建、启动验收报告和校验文件见 [Releases](https://github.com/cccPhoenix/PigeonPal/releases/latest)。CI 验证首次安装，旧版覆盖升级的系统交互仍需在一次性 VM 中确认。
 
 0.3.x 用户需要先手动安装一次 0.4.0 或之后的版本，之后可使用应用内检查更新。
 
