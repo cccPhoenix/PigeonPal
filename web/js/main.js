@@ -16,8 +16,8 @@ import { createHeader } from './ui/header.js'
 import { createTranscript } from './ui/transcript.js'
 import { createComposer } from './ui/composer.js'
 import { createRail } from './ui/rail.js'
-import { createCalendar, calendarDetailHTML } from './ui/calendar.js'
-import { shanghaiDate, validCalendarDate, validCalendarTime } from './services/calendar.js'
+import { createCalendar, calendarDetailHTML, calendarEditHTML, localDateTime } from './ui/calendar.js'
+import { shanghaiDate, validCalendarDate, validCalendarTime, noticeCalendarDateTime } from './services/calendar.js'
 import { createSplitter, watchNoticeWidth, NOTICE_MIN, CALENDAR_MIN } from './ui/splitter.js'
 import { lookHue, imageHue } from './ui/palette.js'
 import { openSettings } from './ui/settings.js'
@@ -127,18 +127,33 @@ const noticeProgress = createNoticeProgress({ root: $('notice-progress'), client
 let profilePage = null
 
 function setView(view, { acknowledge = true } = {}) {
+  const previousView = noticeView.dataset.view
+  const enteringCalendar = view === 'calendar' && previousView !== 'calendar'
+  const enteringRail = (view === 'notice' || view === 'homework') && previousView && previousView !== view
   if (view !== 'user-profile' && profilePage) { profilePage.destroy(); profilePage = null }
   app.style.setProperty('--min-notice', `${view === 'calendar' ? CALENDAR_MIN : NOTICE_MIN}px`)
   noticeView.dataset.view = view
   noticeView.setAttribute('aria-label', view === 'homework' ? '学在浙大作业' : view === 'calendar' ? '日历' : view === 'user-profile' ? '用户画像' : '通知')
   $('pane-calendar').hidden = view !== 'calendar'
   $('pane-user-profile').hidden = view !== 'user-profile'
-  if (view === 'calendar') calendar.render()
+  if (view === 'calendar') {
+    calendar.render()
+    if (enteringCalendar) {
+      $('pane-calendar').classList.remove('calendar-enter')
+      void $('pane-calendar').offsetWidth
+      $('pane-calendar').classList.add('calendar-enter')
+    }
+  } else $('pane-calendar').classList.remove('calendar-enter')
   if (view === 'user-profile' && !profilePage) profilePage = showUserProfile({
     root: $('pane-user-profile'), client: apiClient, onChange: refreshProfileViews,
     onLoad: snapshot => academySelection.refresh(snapshot),
   })
   if (view === 'notice' || view === 'homework') rail.setView(view)
+  if (enteringRail) {
+    delete noticeView.dataset.viewMotion
+    void noticeView.offsetWidth
+    noticeView.dataset.viewMotion = view
+  } else if (view !== 'notice' && view !== 'homework') delete noticeView.dataset.viewMotion
   dock.setView(view)
   if (narrowChat()) toggleChat(false)
   if (view === 'notice' && acknowledge && !rail.trash) markNoticeRead(rail.filter)
@@ -165,7 +180,8 @@ const rail = createRail({
   onRead: markNoticeRead,
   onProcess: () => noticeProgress.refresh(),
 })
-const calendar = createCalendar({ root: $('pane-calendar'), store, onAdd: openNewCalendarItem, onOpen: openCalendarItem })
+const calendar = createCalendar({ root: $('pane-calendar'), store, onAdd: openNewCalendarItem, onOpen: openCalendarItem,
+  onReminderStatus: updateCalendarReminderStatus })
 
 const narrowChat = () => window.matchMedia('(max-width: 1099px)').matches
 function markNoticeRead(sourceId = null) {
@@ -429,7 +445,7 @@ function openWho(anchor) {
 ${markHTML({ look: p.look, image: p.look === 'image' ? p.image : null, size: 88, live: true, gaze: true, poke: true, label: p.botName })}
 <h3>${escapeHtml(p.botName)}</h3><p>你的校园伙伴</p>
 <dl class="kv"><dt>叫你</dt><dd>${escapeHtml(p.nickname || '还没告诉我')}</dd><dt>待办提醒</dt><dd>${count ? `${count} 条` : '没有'}</dd><dt>主动消息</dt><dd>${p.proactive ? '开启' : '关闭'}</dd></dl>
-<div class="pills"><button class="pill" data-go="bot">${icon('sparkle', 15)}形象与称呼</button><button class="pill" data-go="reminders">${icon('bell', 15)}提醒</button></div>
+<div class="pills"><button class="pill" data-go="bot">${icon('sparkle', 15)}形象与称呼</button></div>
 </div>`, { className: 'profile-pop' })
     pop.addEventListener('click', e => { const b = e.target.closest('[data-go]'); if (b) openSettings(settingsApi, { page: b.dataset.go }) })
   } else {
@@ -476,9 +492,7 @@ ${c.sourceId ? `<dl class="kv"><dt>采集状态</dt><dd data-source-state></dd><
 function openMeMenu(anchor) {
   if (overlayFor(anchor)) return closeOverlay()
   const p = store.state.profile
-  const count = pendingReminders(store.state).length
   const pop = popover(anchor, `<div class="pop-title">${escapeHtml(p.nickname || '你好')}</div>
-<button class="mi" data-go="reminders">${icon('bell', 16)}提醒<span class="hint">${count || ''}</span></button>
 <button class="mi" data-go="bot">${icon('sparkle', 16)}形象与称呼</button>
 <button class="mi" data-go="user-profile">${icon('graduate', 16)}用户画像</button>
 <button class="mi" data-go="notify">${icon('rss', 16)}主动消息</button>
@@ -542,24 +556,82 @@ function openNewReminder(opener, { title = '', channelId = 'bot', noticeId } = {
 
 function openNewCalendarItem(date = shanghaiDate(Date.now()), opener) {
   const box = dialog(`<h3>添加日历事项</h3><p>放进日历后，可以直接勾选完成。</p>
+<div class="calendar-add-modes" role="group" aria-label="添加方式"><button type="button" data-calendar-add-mode="manual" aria-pressed="true">自己填写</button><button type="button" data-calendar-add-mode="notice" aria-pressed="false">从通知中选择</button></div>
+<div class="calendar-notice-picker" data-calendar-notice-picker hidden><label for="calendar-notice-search">选择已抓取的通知</label><input class="input" id="calendar-notice-search" data-calendar-notice-search placeholder="搜索通知标题或来源"><div class="calendar-notice-results" data-calendar-notice-results></div></div>
 <div class="field"><label for="calendar-new-title">事项</label><input class="input" id="calendar-new-title" data-f="title" placeholder="要做什么？" maxlength="80"></div>
-<div class="field"><label for="calendar-new-date">日期</label><input class="input" id="calendar-new-date" type="date" data-f="date" value="${escapeHtml(date)}"></div>
+<div class="field"><label for="calendar-new-date">日期</label><input class="input" id="calendar-new-date" type="date" data-f="date" value="${escapeHtml(date)}"><span class="calendar-date-hint" data-calendar-notice-help hidden></span></div>
 <div class="field"><label for="calendar-new-time">时间（可选）</label><input class="input" id="calendar-new-time" type="time" data-f="time"></div>
 <div class="btns"><button class="btn" data-x="cancel">取消</button><button class="btn primary" data-x="ok">添加</button></div>`, { opener })
+  box.classList.add('calendar-add-dialog')
+  const titleInput = box.querySelector('[data-f="title"]')
+  const dateInput = box.querySelector('[data-f="date"]')
+  const timeInput = box.querySelector('[data-f="time"]')
+  const notices = Object.values(store.state.notices).filter(n => typeof n.noticeId === 'string' && !noticeDeleted(store.state, n.noticeId))
+    .sort((a, b) => (b.publishedAt || 0) - (a.publishedAt || 0) || a.noticeId.localeCompare(b.noticeId))
+  const noticeById = new Map(notices.map(n => [n.noticeId, n]))
+  let mode = 'manual'
+  let selectedNotice = null
+  let manualDraft = { title: '', date, time: '' }
+
+  const noticeSource = notice => store.state.channels.find(channel => channel.sourceId === notice.sourceId)?.title || notice.sourceId || '通知'
+  const renderNotices = (query = '') => {
+    const text = query.trim().toLocaleLowerCase('zh-CN')
+    const matches = notices.filter(notice => !text || `${notice.title} ${noticeSource(notice)}`.toLocaleLowerCase('zh-CN').includes(text)).slice(0, 50)
+    box.querySelector('[data-calendar-notice-results]').innerHTML = matches.length ? matches.map(notice => {
+      const when = noticeCalendarDateTime(notice)
+      const added = Object.values(store.state.calendarItems).some(item => item.noticeId === notice.noticeId)
+      return `<button type="button" class="calendar-notice-option" data-calendar-notice-id="${escapeHtml(notice.noticeId)}" aria-pressed="${selectedNotice?.noticeId === notice.noticeId}"><span class="calendar-notice-title">${escapeHtml(notice.title)}</span><span class="calendar-notice-meta">${escapeHtml(noticeSource(notice))}${when.date ? ` · ${escapeHtml(when.date)}` : ''}${added ? ' · 已在日历' : ''}</span></button>`
+    }).join('') : `<p class="muted">${notices.length ? '没有匹配的通知' : '还没有已抓取的通知'}</p>`
+  }
+  const chooseNotice = notice => {
+    selectedNotice = notice
+    titleInput.value = notice.title
+    const when = noticeCalendarDateTime(notice)
+    dateInput.value = when.date
+    timeInput.value = when.time
+    const hint = box.querySelector('[data-calendar-notice-help]')
+    hint.hidden = false
+    hint.textContent = when.date ? '已从通知带入，可调整' : '未提供日期，请选择'
+    renderNotices(box.querySelector('[data-calendar-notice-search]').value)
+  }
+  const setMode = next => {
+    if (next === mode) return
+    if (mode === 'manual') manualDraft = { title: titleInput.value, date: dateInput.value, time: timeInput.value }
+    mode = next
+    for (const button of box.querySelectorAll('[data-calendar-add-mode]')) button.setAttribute('aria-pressed', String(button.dataset.calendarAddMode === mode))
+    box.querySelector('[data-calendar-notice-picker]').hidden = mode !== 'notice'
+    box.querySelector('[data-calendar-notice-help]').hidden = mode === 'manual' || !selectedNotice
+    titleInput.readOnly = mode === 'notice'
+    if (mode === 'manual') {
+      titleInput.value = manualDraft.title
+      dateInput.value = manualDraft.date
+      timeInput.value = manualDraft.time
+    } else if (selectedNotice) chooseNotice(selectedNotice)
+    else { titleInput.value = ''; dateInput.value = ''; timeInput.value = ''; renderNotices() }
+  }
+  box.querySelector('[data-calendar-notice-search]').addEventListener('input', event => renderNotices(event.target.value))
   box.addEventListener('click', e => {
+    const sourceMode = e.target.closest?.('[data-calendar-add-mode]')
+    if (sourceMode) return setMode(sourceMode.dataset.calendarAddMode)
+    const choice = e.target.closest?.('[data-calendar-notice-id]')
+    if (choice) return chooseNotice(noticeById.get(choice.dataset.calendarNoticeId))
     const button = e.target.closest?.('[data-x]')
     if (!button) return
     if (button.dataset.x === 'cancel') return closeOverlay()
     if (button.dataset.x !== 'ok') return
-    const title = box.querySelector('[data-f="title"]').value.trim()
-    const day = box.querySelector('[data-f="date"]').value
-    const time = box.querySelector('[data-f="time"]').value
+    if (mode === 'notice' && !selectedNotice) return toast('先选择一条通知')
+    const title = titleInput.value.trim()
+    const day = dateInput.value
+    const time = timeInput.value
     if (!title) return toast('先写下要做的事')
     if (!validCalendarDate(day) || time && !validCalendarTime(time)) return toast('请检查日期和时间')
-    store.upsertCalendarItem({ id: newId('cal'), title, date: day, time, completed: false })
+    const existing = selectedNotice && mode === 'notice'
+      ? Object.values(store.state.calendarItems).find(item => item.noticeId === selectedNotice.noticeId) : null
+    store.upsertCalendarItem({ id: existing?.id || newId('cal'), title, date: day, time, completed: false,
+      ...(mode === 'notice' ? { noticeId: selectedNotice.noticeId } : {}) })
     closeOverlay()
     calendar.setMonth(day)
-    toast('已加入日历')
+    toast(existing ? '已更新日历事项' : '已加入日历')
   })
 }
 
@@ -567,6 +639,74 @@ function openCalendarItem(item, opener) {
   const box = dialog(calendarDetailHTML(item, store.state), { opener })
   box.classList.add('calendar-dialog')
   box.querySelector('[data-x="close"]').addEventListener('click', closeOverlay)
+  box.addEventListener('click', async event => {
+    const edit = event.target.closest?.('[data-calendar-edit]')
+    if (edit) return openCalendarEdit(item, opener)
+    const button = event.target.closest?.('[data-calendar-completion], [data-calendar-cancel-reminder]')
+    if (!button) return
+    const completed = button.dataset.calendarCompletion === 'true'
+    button.disabled = true
+    try {
+      if (item.reminderId) {
+        const status = button.dataset.calendarCancelReminder !== undefined ? 'cancelled' : completed ? 'done' : 'pending'
+        const { reminder } = await apiClient.updateReminder(item.reminderId, { status })
+        store.syncReminders([reminder])
+      } else store.setCalendarCompleted(item.id, completed)
+      closeOverlay()
+      toast(button.dataset.calendarCancelReminder !== undefined ? '提醒已取消' : completed ? '已标记完成' : '已标记未完成')
+    } catch (error) { button.disabled = false; toast(apiErrorText(error)) }
+  })
+}
+
+function openCalendarEdit(item, opener) {
+  const reminder = item.reminderId && store.state.reminders.find(row => row.id === item.reminderId)
+  const box = dialog(calendarEditHTML(item, store.state), { opener })
+  box.classList.add('calendar-edit-dialog')
+  box.addEventListener('click', async event => {
+    const button = event.target.closest?.('[data-edit-action]')
+    if (!button) return
+    if (button.dataset.editAction === 'cancel') return closeOverlay()
+    const title = box.querySelector('[data-edit="title"]').value.trim()
+    const day = box.querySelector('[data-edit="date"]').value
+    const time = box.querySelector('[data-edit="time"]').value
+    if (!title) return toast('先写下要做的事')
+    if (!validCalendarDate(day) || time && !validCalendarTime(time)) return toast('请检查日期和时间')
+    if (reminder && item.kind === 'reminder' && !time) return toast('提醒需要具体时间')
+    const at = time ? Date.parse(`${day}T${time}:00+08:00`) : null
+    const reminderTimeChanged = reminder && item.kind === 'reminder' && (day !== item.date || time !== item.time)
+    if (reminderTimeChanged && (!Number.isFinite(at) || at <= Date.now())) return toast('请选择将来的提醒时间')
+    const reminderInput = box.querySelector('[data-edit="reminder"]')
+    const reminderAt = reminderInput ? Date.parse(`${reminderInput.value}:00+08:00`) : null
+    const linkedReminderTimeChanged = reminderInput && reminderInput.value !== localDateTime(reminder.dueAt)
+    if (linkedReminderTimeChanged && (!Number.isFinite(reminderAt) || reminderAt <= Date.now())) return toast('请选择将来的提醒时间')
+    button.disabled = true
+    try {
+      if (reminder && item.kind === 'reminder') {
+        const patch = { title, ...(reminderTimeChanged ? { dueAt: at } : {}) }
+        const result = await apiClient.updateReminder(reminder.id, patch)
+        store.syncReminders([result.reminder])
+      } else {
+        if (linkedReminderTimeChanged) {
+          const result = await apiClient.updateReminder(reminder.id, { dueAt: reminderAt })
+          store.syncReminders([result.reminder])
+        }
+        const existing = store.state.calendarItems[item.id]
+          || (item.noticeId && Object.values(store.state.calendarItems).find(row => row.noticeId === item.noticeId))
+        store.upsertCalendarItem({ id: existing?.id || newId('cal'), title, date: day, time,
+          completed: item.completed, ...(item.noticeId ? { noticeId: item.noticeId } : {}) })
+      }
+      closeOverlay()
+      calendar.setMonth(day)
+      toast('事项已更新')
+    } catch (error) { button.disabled = false; toast(apiErrorText(error)) }
+  })
+}
+
+async function updateCalendarReminderStatus(id, status) {
+  try {
+    const { reminder } = await apiClient.updateReminder(id, { status })
+    store.syncReminders([reminder])
+  } catch (error) { calendar.render(); toast(apiErrorText(error)) }
 }
 
 function openAddSource(opener) {
@@ -626,14 +766,6 @@ const settingsApi = {
   openIdentityAuth,
   openApiSettings,
   openUserProfile,
-  async reminder(id, patch) {
-    const { reminder } = await apiClient.updateReminder(id, patch)
-    store.syncReminders([reminder])
-  },
-  async demoReminder() {
-    const { reminder } = await apiClient.createReminder({ title: '完成数学作业', dueAt: Date.now() + 5000, channelId: 'bot' })
-    store.syncReminders([reminder])
-  },
   reset: () => store.reset(),
 }
 

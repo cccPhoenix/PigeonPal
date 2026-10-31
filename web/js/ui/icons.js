@@ -11,6 +11,7 @@ const PATHS = {
   clock: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4.5l3 1.8"/>',
   pin: '<path d="M12 21s6-5.6 6-11a6 6 0 1 0-12 0c0 5.4 6 11 6 11Z"/><circle cx="12" cy="10" r="2.2"/>',
   menu: '<path d="M4 7h16M4 12h16M4 17h10"/>',
+  itemList: '<rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="M9 9h7M9 15h7"/><circle cx="6.5" cy="9" r=".7" fill="currentColor" stroke="none"/><circle cx="6.5" cy="15" r=".7" fill="currentColor" stroke="none"/>',
   sidebar: '<rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="M9.5 4.5v15"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.4-2.3.9a7 7 0 0 0-2-1.2L14 3h-4l-.6 2.6a7 7 0 0 0-2 1.2L5 5.9 3 9.3l2 1.5a7 7 0 0 0 0 2.4l-2 1.5 2 3.4 2.4-.9a7 7 0 0 0 2 1.2L10 21h4l.6-2.6a7 7 0 0 0 2-1.2l2.4.9 2-3.4-2-1.5c.07-.4.1-.8.1-1.2Z"/>',
   chevron: '<path d="m9 6 6 6-6 6"/>',

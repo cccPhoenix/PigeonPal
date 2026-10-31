@@ -1,8 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createStore, hydrate } from '../web/js/store.js'
-import { buildCalendarItems } from '../web/js/services/calendar.js'
-import { createCalendar, calendarDetailHTML } from '../web/js/ui/calendar.js'
+import { buildCalendarItems, noticeCalendarDateTime } from '../web/js/services/calendar.js'
+import { createCalendar, calendarDetailHTML, calendarEditHTML } from '../web/js/ui/calendar.js'
 import { createAIChat } from '../web/js/services/chat.js'
 
 const now = Date.parse('2026-10-19T12:00:00+08:00')
@@ -40,7 +40,16 @@ test('timezone-aware deadlines use the Shanghai calendar day', () => {
   assert.deepEqual(buildCalendarItems(store.state).map(item => [item.date, item.time]), [['2026-10-21', '07:30']])
 })
 
-test('only manual notice reminders enter the calendar, on the event or deadline date', () => {
+test('adding a captured notice uses its event time, then deadline, and keeps undated notices blank', () => {
+  assert.deepEqual(noticeCalendarDateTime({ eventAt: Date.parse('2026-11-05T23:30:00Z'), deadlineAt: '2026-11-10' }),
+    { date: '2026-11-06', time: '07:30' })
+  assert.deepEqual(noticeCalendarDateTime({ deadlineAt: '2026-11-10' }), { date: '2026-11-10', time: '' })
+  assert.deepEqual(noticeCalendarDateTime({ deadlineAt: '2026-11-10T09:00:00+08:00' }),
+    { date: '2026-11-10', time: '09:00' })
+  assert.deepEqual(noticeCalendarDateTime({ title: '无日期通知' }), { date: '', time: '' })
+})
+
+test('only manual notice reminders enter the calendar on their reminder date', () => {
   const store = createStore(null)
   store.upsertNotice('src-yunfeng', { id: 'n1', noticeId: 'n1', sourceId: 'yunfeng', title: '讲座',
     publishedAt: now, eventAt: Date.parse('2026-10-25T15:00:00+08:00') })
@@ -51,9 +60,11 @@ test('only manual notice reminders enter the calendar, on the event or deadline 
   store.syncReminders([row('rem-ddl-auto', 'n1', true), row('rem-manual', 'n1'), row('rem-second', 'n2')])
   const entries = buildCalendarItems(store.state)
   assert.deepEqual(entries.map(item => [item.id, item.date, item.time]), [
-    ['notice:n1', '2026-10-25', '15:00'], ['notice:n2', '2026-10-27', ''],
+    ['notice:n1', '2026-10-24', '09:00'], ['notice:n2', '2026-10-24', '09:00'],
   ])
+  assert.equal(entries[0].reminderId, 'rem-manual')
   store.setCalendarCompleted('notice:n1', true)
+  assert.equal(buildCalendarItems(store.state).find(item => item.id === 'notice:n1').completed, false)
   store.syncReminders([{ ...row('rem-ddl-auto', 'n1'), automatic: false, updatedAt: 3 }])
   assert.equal(buildCalendarItems(store.state).filter(item => item.id === 'notice:n1').length, 1)
   store.syncReminders([{ ...row('rem-manual', 'n1'), status: 'cancelled', updatedAt: 2 }])
@@ -89,11 +100,14 @@ test('clicking a calendar task opens details while only its checkbox changes com
   assert.match(calendarDetailHTML(opened, store.state), /<h4 class="calendar-detail-title">交读书报告<\/h4>/)
   assert.match(calendarDetailHTML(opened, store.state), /2026-10-20 18:00/)
   assert.match(calendarDetailHTML(opened, store.state), /<div class="calendar-detail-head"><h3>事项详情<\/h3><button class="icon-btn flat" type="button" data-x="close" aria-label="关闭事项详情">/)
-  assert.doesNotMatch(calendarDetailHTML(opened, store.state), /<div class="btns">/)
+  assert.match(calendarDetailHTML(opened, store.state), /data-calendar-completion="true">标记完成/)
+  assert.match(calendarDetailHTML(opened, store.state), /data-calendar-edit>修改/)
+  const gridDetail = calendarDetailHTML(opened, store.state)
   opened = null
   listeners.click({ target: { closest: selector => selector === '[data-calendar-open], [data-calendar-item]'
     ? { dataset: { calendarItem: 'cal-chat-1' } } : null } })
   assert.equal(opened?.id, 'cal-chat-1')
+  assert.equal(calendarDetailHTML(opened, store.state), gridDetail)
   opened = null
   listeners.click({ target: { closest: selector => selector === '[data-calendar-check]'
     ? { dataset: { calendarCheck: 'cal-chat-1' } } : null } })
@@ -127,6 +141,65 @@ test('calendar details show stored homework and notice context', () => {
   assert.match(noticeHTML, /主讲科研方向/)
   assert.match(noticeHTML, /报告厅/)
   assert.match(noticeHTML, /2026-10-25 14:30/)
+  assert.match(noticeHTML, /data-calendar-edit>修改/)
+  assert.match(noticeHTML, /data-calendar-completion="true">标记完成/)
+  assert.match(noticeHTML, /data-calendar-cancel-reminder>取消提醒/)
+  assert.match(calendarEditHTML(entries.find(item => item.kind === 'notice'), store.state), /data-edit="reminder"/)
+})
+
+test('editing a homework calendar row keeps its original deadline visible without duplicating it', () => {
+  const store = createStore(null)
+  store.syncHomeworkSnapshot([homework('editable', '2026-10-30')], { now })
+  store.upsertCalendarItem({ id: 'cal-homework-editable', noticeId: 'xzzd:editable',
+    title: '复习后交作业', date: '2026-11-01', time: '10:00', completed: false })
+  const entries = buildCalendarItems(store.state)
+  assert.equal(entries.length, 1)
+  assert.deepEqual([entries[0].kind, entries[0].date, entries[0].calendarOverride], ['homework', '2026-11-01', true])
+  assert.match(calendarDetailHTML(entries[0], store.state), /原截止日期/)
+  assert.match(calendarEditHTML(entries[0], store.state), /课程原截止时间不会改变/)
+  assert.equal(buildCalendarItems(hydrate(JSON.stringify(store.state))).find(row => row.noticeId === 'xzzd:editable').date, '2026-11-01')
+})
+
+test('reminder panel lists calendar entries and manual reminders, excluding automatic reminders', async () => {
+  const store = createStore(null)
+  const reminder = { id: 'rem-auto', title: '自动提醒', dueAt: now + 60_000,
+    status: 'pending', automatic: true, channelId: 'bot', updatedAt: 1 }
+  store.syncReminders([reminder])
+  store.upsertCalendarItem({ id: 'cal-manual', title: '手动日历事项', date: '2026-10-20', time: '18:00' })
+  const listeners = {}
+  const values = {}
+  const root = { innerHTML: '', dataset: {}, clientHeight: 600, style: { setProperty(key, value) { values[key] = value } },
+    addEventListener(type, fn) { listeners[type] = fn }, querySelectorAll() { return [] } }
+  let opened = null
+  const statuses = []
+  const calendar = createCalendar({ root, store, onOpen: item => { opened = item },
+    onReminderStatus: async (id, status) => statuses.push([id, status]) })
+  calendar.render()
+  assert.match(root.innerHTML, /事项列表<\/button>/)
+  assert.equal(root.dataset.remindersOpen, 'false')
+  assert.match(root.innerHTML, /data-calendar-reminders-toggle aria-controls="calendar-reminder-panel" aria-expanded="false"/)
+  assert.match(root.innerHTML, /data-calendar-open="cal-manual"/)
+  assert.doesNotMatch(root.innerHTML, /自动提醒/)
+  listeners.click({ target: { closest: selector => selector === '[data-calendar-reminders-toggle]' ? {} : null } })
+  assert.equal(root.dataset.remindersOpen, 'true')
+  assert.equal(values['--calendar-reminder-height'], '150px')
+  calendar.render()
+  assert.match(root.innerHTML, /aria-expanded="true"/)
+  listeners.pointerdown({ target: { closest: selector => selector === '[data-calendar-splitter]'
+    ? { setPointerCapture() {} } : null }, pointerId: 3, pointerType: 'mouse', button: 0, clientY: 100, preventDefault() {} })
+  listeners.pointermove({ pointerId: 3, clientY: 140 })
+  assert.equal(values['--calendar-reminder-height'], '190px')
+  listeners.pointerup({ pointerId: 3 })
+  listeners.click({ target: { closest: selector => selector === '[data-calendar-reminders-toggle]' ? {} : null } })
+  assert.equal(root.dataset.remindersOpen, 'false')
+
+  store.syncReminders([{ ...reminder, automatic: false, updatedAt: 2 }])
+  calendar.render()
+  assert.match(root.innerHTML, /自动提醒/)
+  await listeners.change({ target: { closest: selector => selector === '[data-calendar-check]'
+    ? { dataset: { calendarCheck: 'reminder:rem-auto' }, checked: true } : null } })
+  assert.deepEqual(statuses, [['rem-auto', 'done']])
+  assert.equal(store.state.calendarCompleted['reminder:rem-auto'], undefined)
 })
 
 test('notice completion transfers to an explicit calendar item and remains editable', () => {

@@ -63,6 +63,39 @@ class CalendarChatTests(unittest.TestCase):
         self.assertEqual(response["events"][0]["name"], "calendar.upsert")
         self.assertEqual(response["events"][0]["args"]["date"], "2026-10-20")
 
+    def test_conversation_can_add_both_a_calendar_item_and_a_reminder(self):
+        class Model:
+            config = SimpleNamespace(configured=True, error=None)
+
+            def __init__(self):
+                self.calls = 0
+
+            def complete(self, messages, *, tools=None):
+                self.calls += 1
+                if self.calls == 1:
+                    names = {item["function"]["name"] for item in tools}
+                    self_test.assertIn("create_calendar_item", names)
+                    self_test.assertIn("create_reminder", names)
+                    return {"content": None, "tool_calls": [
+                        {"id": "calendar-1", "function": {"name": "create_calendar_item", "arguments": json.dumps({
+                            "title": "交报告", "date": "2026-11-20", "time": "18:00"})}},
+                        {"id": "reminder-1", "function": {"name": "create_reminder", "arguments": json.dumps({
+                            "title": "交报告", "dueAt": "2026-11-20T17:00:00+08:00"})}},
+                    ]}
+                return {"content": "已加入日历，也设好了提醒。", "tool_calls": []}
+
+        self_test = self
+        processor = SimpleNamespace(client=Model(), generation=0, stop=SimpleNamespace(is_set=lambda: False))
+        reminder = {"id": "rem-chat-test", "title": "交报告", "dueAt": 1795165200000,
+                    "status": "pending", "channelId": "bot"}
+        runtime = SimpleNamespace(reminders=lambda: [], receipt=lambda _id: None,
+                                  save_receipt=lambda _id, _value: None,
+                                  create=lambda title, due_at, channel_id, identity: reminder)
+        response = ChatService(processor, runtime).respond({
+            "text": "把交报告加到日历，提前一小时提醒我", "channelId": "bot", "requestId": "both-request-1"})
+        self.assertEqual([event["name"] for event in response["events"] if event["type"] == "action"],
+                         ["calendar.upsert", "reminder.upsert"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,18 +1,15 @@
 import { isDesktop, desktopNotificationStatus, setDesktopNotifications } from '../services/desktop.js'
 import { markHTML } from '../mark/index.js'
 import { LOOKS, LOOK_IDS } from '../mark/looks.js'
-import { pendingReminders } from '../reminders.js'
 import { icon } from './icons.js'
-import { escapeHtml, whenLabel } from './format.js'
+import { escapeHtml } from './format.js'
 import { sheet, closeOverlay, toast } from './overlays.js'
-import { apiErrorText } from '../services/api.js'
 import { desktopUpdates } from '../services/desktop-updates.js'
 import { updatesPageHTML } from './updates.js'
 
 const PAGES = [
   ['bot', '形象与称呼', 'sparkle'],
   ['user-profile', '用户画像', 'graduate'],
-  ['reminders', '提醒', 'bell'],
   ['notify', '主动消息', 'rss'],
   ['auth', '身份认证', 'key'],
   ['api', 'API 设置', 'settings'],
@@ -21,7 +18,7 @@ const PAGES = [
   ['about', '关于', 'settings'],
 ]
 
-// Settings sheet. `api` is what it may change: { store, reminder(id, patch), demoReminder(), reset() }
+// Settings sheet. `api` is what it may change: { store, reset() }
 export function openSettings(api, { page = 'bot', opener } = {}) {
   if (page === 'auth') return api.openIdentityAuth?.(opener)
   if (page === 'api') return api.openApiSettings?.(opener)
@@ -47,21 +44,6 @@ export function openSettings(api, { page = 'bot', opener } = {}) {
 <button class="look" data-look="image" aria-pressed="${p().look === 'image'}">${p().image ? markHTML({ image: p().image, size: 56, live: true }) : `<span class="mk" style="--mk-size:56px;display:grid;place-items:center;color:var(--ink-3)">${icon('image', 26)}</span>`}<span>上传图片</span><small>PNG / SVG / GIF</small></button>
 </div><input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" data-upload hidden>
 <span class="help">新增 10 款参考角色。可以在 <a href="./lab.html" target="_blank">形象实验室</a> 对比大小和动作；选择后会同步到聊天头像。</span></div>`,
-
-    reminders: () => {
-      const list = pendingReminders(store.state)
-      const past = store.state.reminders.filter(r => r.status !== 'pending').sort((a, b) => b.dueAt - a.dueAt).slice(0, 8)
-      const row = r => `<div class="rem ${r.status}" data-rem="${escapeHtml(r.id)}">
-  <button class="rem-check" data-rem-act="${r.status === 'done' ? 'reopen' : 'done'}" aria-label="${r.status === 'done' ? '标记未完成' : '完成'}">${icon('check', 14)}</button>
-  <div class="rem-text"><div class="rem-title">${escapeHtml(r.title)}</div><div class="rem-when">${escapeHtml(whenLabel(r.dueAt))}${r.status === 'cancelled' ? ' · 已取消' : ''}</div></div>
-  ${r.status === 'pending' ? `<input class="input" type="datetime-local" data-rem-time value="${toLocalInput(r.dueAt)}" aria-label="修改时间"><button class="tool" data-rem-act="cancel" aria-label="取消提醒">${icon('trash', 16)}</button>` : ''}
-</div>`
-      return `<h3>提醒</h3>
-<p class="note">直接在聊天里说「今晚九点提醒我写数学作业」就能新建提醒。桌面版关闭窗口后仍在托盘运行，到点会弹出系统通知；彻底退出期间的提醒会在下次启动补收。网页版需要保持本机服务运行。</p>
-<div class="rem-list">${list.length ? list.map(row).join('') : '<p class="muted">暂时没有待办的提醒</p>'}</div>
-${past.length ? `<div class="pop-title" style="padding:18px 0 4px">已结束</div><div class="rem-list">${past.map(row).join('')}</div>` : ''}
-<div class="btns" style="margin-top:18px"><button class="btn" data-set="demo-reminder">演示：5 秒后来一条提醒</button></div>`
-    },
 
     notify: () => `<h3>主动消息</h3>
 <div class="toggle-row"><div><div class="t">让${escapeHtml(p().botName)}主动找我</div><div class="d">有新通知或提醒到点时发消息</div></div>${sw('proactive', p().proactive)}</div>
@@ -105,7 +87,6 @@ ${store.state.channels.filter(c => c.kind === 'source').map(c => `<div class="to
     }
     if (t.dataset.set === 'close') return closeOverlay()
     if (t.dataset.set === 'reset') { if (confirm('重置本页聊天记录和外观设置？本机通知、提醒、校园绑定和 API 配置会保留。')) { closeOverlay(); api.reset() } return }
-    if (t.dataset.set === 'demo-reminder') { try { await api.demoReminder(); toast('5 秒后见'); closeOverlay() } catch (error) { toast(apiErrorText(error)) } return }
     if (t.dataset.set === 'system-notify') {
       if (isDesktop()) {
         try { await setDesktopNotifications(!desktopNotificationStatus().enabled); show(currentPage) } catch { toast('系统通知设置保存失败，请重试') }
@@ -125,12 +106,6 @@ ${store.state.channels.filter(c => c.kind === 'source').map(c => `<div class="to
       store.setProfile({ look: t.dataset.look })
       return show(currentPage)
     }
-    if (t.dataset.remAct) {
-      const id = t.closest('[data-rem]').dataset.rem
-      const status = { done: 'done', reopen: 'pending', cancel: 'cancelled' }[t.dataset.remAct]
-      try { await api.reminder(id, { status }); show(currentPage) } catch (error) { toast(apiErrorText(error)) }
-      return
-    }
   })
   box.addEventListener('dblclick', e => { if (e.target.closest('[data-look="image"]')) box.querySelector('[data-upload]').click() })
   box.addEventListener('change', async e => {
@@ -140,9 +115,6 @@ ${store.state.channels.filter(c => c.kind === 'source').map(c => `<div class="to
       if (t.dataset.field === 'botName' && !value) { t.value = p().botName; return }
       store.setProfile({ [t.dataset.field]: value })
       toast('已保存')
-    }
-    if (t.dataset.remTime !== undefined) {
-      try { await api.reminder(t.closest('[data-rem]').dataset.rem, { dueAt: new Date(t.value).getTime() }); toast('时间改好了'); show(currentPage) } catch (err) { toast(apiErrorText(err)) }
     }
     if (t.dataset.upload !== undefined && t.files?.[0]) {
       const file = t.files[0]
@@ -155,10 +127,4 @@ ${store.state.channels.filter(c => c.kind === 'source').map(c => `<div class="to
   offUpdates = desktopUpdates.subscribe(() => { if (currentPage === 'updates') show('updates') })
   show(page)
   desktopUpdates.connect().catch(() => {})
-}
-
-function toLocalInput(at) {
-  const d = new Date(at)
-  const pad = n => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
